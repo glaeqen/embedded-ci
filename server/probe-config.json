@@ -1,0 +1,13 @@
+{
+  "auth_token": "LMvHwnOsXpYYnC5HNUoJ1u20aChhSQ14Su2dJ7lUu4JOHI1mPlmhnYM4VoEDteFtnSJlsbGn4dnYshnVwcOzs6QaJHSMnlwNuQlMvacbm4LpNdBe9fulzFvhi983mugt",
+  "probe_configs": [
+    {
+      "probe_serial": "0670FF525750877267012316",
+      "target_name": "STM32F746ZGTx"
+    },
+    {
+      "probe_serial": "066EFF494956805087153016",
+      "target_name": "STM32F411RETx"
+    }
+  ]
+}
