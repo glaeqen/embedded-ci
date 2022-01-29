@@ -1,20 +1,18 @@
 use crate::{
-    app::{JobStatus, RunQueue, RunTest},
+    app::{JobStatus, RunQueue, RunJob},
     target::Targets,
 };
 use log::*;
-use probe_rs::{DebugProbeType, Probe};
-use rand::prelude::*;
-use rocket::{get, post, routes, serde::json::Json, State};
+use rocket::{get, post, serde::json::Json, State};
 use rocket_okapi::swagger_ui::{make_swagger_ui, SwaggerUIConfig};
-use rocket_okapi::{openapi, openapi_get_routes, JsonSchema};
-use serde::{Deserialize, Serialize};
+use rocket_okapi::{openapi, openapi_get_routes};
 use std::sync::{Arc, Mutex};
 
 #[openapi]
-#[post("/run_tests", format = "application/json", data = "<job>")]
-fn run_tests(
-    job: Json<RunTest>,
+#[post("/run_job", format = "application/json", data = "<job>")]
+fn run_job(
+    _token: crate::auth::Token,
+    job: Json<RunJob>,
     run_queue: &State<Arc<Mutex<RunQueue>>>,
 ) -> Json<Result<u32, String>> {
     let mut app = run_queue.lock().unwrap();
@@ -28,7 +26,11 @@ fn run_tests(
 
 #[openapi]
 #[get("/status/<id>")]
-fn get_status(id: u32, run_queue: &State<Arc<Mutex<RunQueue>>>) -> Json<Result<JobStatus, String>> {
+fn get_status(
+    _token: crate::auth::Token,
+    id: u32,
+    run_queue: &State<Arc<Mutex<RunQueue>>>,
+) -> Json<Result<JobStatus, String>> {
     let app = run_queue.lock().unwrap();
 
     Json(
@@ -40,13 +42,14 @@ fn get_status(id: u32, run_queue: &State<Arc<Mutex<RunQueue>>>) -> Json<Result<J
 
 #[openapi]
 #[get("/")]
-fn index(run_queue: &State<Arc<Mutex<RunQueue>>>) -> Json<Targets> {
+fn index(_token: crate::auth::Token, run_queue: &State<Arc<Mutex<RunQueue>>>) -> Json<Targets> {
     let targets = run_queue.lock().unwrap().get_targets().clone();
     println!("Targets: {:?}", targets);
 
     Json(targets)
 }
 
+#[openapi]
 #[get("/token")]
 fn test_token(_token: crate::auth::Token) -> Json<String> {
     Json("hello with token".to_string())
@@ -55,8 +58,10 @@ fn test_token(_token: crate::auth::Token) -> Json<String> {
 pub async fn serve_routes(state: Arc<Mutex<RunQueue>>) -> Result<(), rocket::Error> {
     rocket::build()
         // .mount("/", routes![index])
-        .mount("/", openapi_get_routes![index, get_status, run_tests])
-        .mount("/", routes![test_token])
+        .mount(
+            "/",
+            openapi_get_routes![index, get_status, run_job, test_token],
+        )
         .mount(
             "/swagger",
             make_swagger_ui(&SwaggerUIConfig {

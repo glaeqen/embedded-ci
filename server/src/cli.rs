@@ -1,6 +1,5 @@
 use crate::target::TargetSettings;
 use clap::Parser;
-use log::*;
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -58,6 +57,8 @@ pub fn cli() -> Cli {
             &serde_json::to_string_pretty(&settings).unwrap(),
         )
         .unwrap();
+
+        std::process::exit(0);
     }
 
     Cli {

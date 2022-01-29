@@ -1,6 +1,6 @@
 use log::*;
 use num_enum::TryFromPrimitive;
-use probe_rs::{DebugProbeInfo, MemoryInterface, Probe, WireProtocol};
+use probe_rs::{MemoryInterface, Probe, WireProtocol};
 use rocket::request::FromParam;
 use rocket_okapi::JsonSchema;
 use serde::{Deserialize, Serialize};

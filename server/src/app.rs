@@ -4,17 +4,12 @@ use crate::{
 };
 use anyhow::anyhow;
 use log::*;
-use probe_rs::flashing::{download_file_with_options, DownloadOptions, Format};
-use probe_rs::{CoreStatus, DebugProbeError, HaltReason, Probe, ProbeCreationError};
-use probe_rs_rtt::Rtt;
 use rand::prelude::*;
 use rocket_okapi::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
-use std::{fs, thread};
+use std::time::Duration;
 
 #[derive(Clone, Debug, JsonSchema, Serialize, Deserialize)]
 pub enum RunOn {
@@ -24,7 +19,7 @@ pub enum RunOn {
 }
 
 #[derive(Clone, Debug, JsonSchema, Serialize, Deserialize)]
-pub struct RunTest {
+pub struct RunJob {
     pub run_on: RunOn,
     pub binary_b64: String,
     pub timeout_secs: u8,
@@ -41,7 +36,7 @@ pub enum JobStatus {
 #[derive(Debug)]
 pub struct RunQueue {
     targets: Targets,
-    jobs: HashMap<u32, (JobStatus, RunTest)>,
+    jobs: HashMap<u32, (JobStatus, RunJob)>,
 }
 
 impl RunQueue {
@@ -60,7 +55,7 @@ impl RunQueue {
         &self.targets
     }
 
-    pub fn register_job(&mut self, test: RunTest) -> Result<u32, String> {
+    pub fn register_job(&mut self, test: RunJob) -> Result<u32, String> {
         let available = match &test.run_on {
             RunOn::Probe(serial) => self.targets.get_probe(serial).is_some(),
             RunOn::Target(target_name) => self.targets.get_target(target_name).is_some(),
@@ -100,9 +95,9 @@ impl Backend {
     pub async fn run(run_queue: Arc<Mutex<RunQueue>>) {
         let queue = run_queue.lock().unwrap();
 
-        for (worker_no, target) in queue.get_targets().all_targets().iter().enumerate() {
-            let mut worker = Worker::from_target(worker_no, target, run_queue.clone());
-            let worker_handle = tokio::spawn(async move { worker.run().await });
+        for target in queue.get_targets().all_targets() {
+            let mut worker = Worker::from_target(target, run_queue.clone());
+            let _worker_handle = tokio::spawn(async move { worker.run().await });
             info!("Started worker for probe {}", target.probe_serial);
         }
     }
@@ -116,7 +111,7 @@ struct Worker {
 }
 
 impl Worker {
-    fn from_target(worker_no: usize, target: &Target, jobs: Arc<Mutex<RunQueue>>) -> Self {
+    fn from_target(target: &Target, jobs: Arc<Mutex<RunQueue>>) -> Self {
         Worker {
             probe_serial: target.probe_serial.clone(),
             target_name: target.target_name.clone(),
@@ -173,12 +168,16 @@ impl Worker {
         }
     }
 
-    fn run_test(&mut self, test_specification: &RunTest) -> Result<String, probe_rs::Error> {
+    fn run_test(&mut self, test_specification: &RunJob) -> anyhow::Result<String> {
         let elf_file = base64::decode(&test_specification.binary_b64)
             .map_err(|_| anyhow!("Firmware is not b64"))?;
 
         let mut runner = runner::Runner::new(&elf_file, &self.target_name, &self.probe_serial)?;
 
-        Ok(runner.run(Duration::from_secs(test_specification.timeout_secs.into()))?)
+        let run = runner.run(Duration::from_secs(test_specification.timeout_secs.into()));
+
+        debug!("{}: Runner exit status: {:?}", self.probe_serial, run);
+
+        run
     }
 }

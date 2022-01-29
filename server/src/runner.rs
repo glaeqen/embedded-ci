@@ -9,8 +9,6 @@ use std::io::Cursor;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::app::RunTest;
-
 const THUMB_BIT: u32 = 1;
 pub const LR: CoreRegisterAddress = CoreRegisterAddress(14);
 pub const PC: CoreRegisterAddress = CoreRegisterAddress(15);
@@ -55,7 +53,8 @@ impl<'a> Runner<'a> {
         target_name: &'a str,
         probe_serial: &'a str,
     ) -> anyhow::Result<Runner<'a>> {
-        let elf = File::parse(elf_bytes)?;
+        let elf = File::parse(elf_bytes)
+            .map_err(|e| anyhow!("ELF parsing error, file is not an ELF file: '{}'", e))?;
 
         let mut rtt = None;
         let mut main = None;

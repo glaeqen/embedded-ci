@@ -1,5 +1,8 @@
 {
-  "auth_token": "LMvHwnOsXpYYnC5HNUoJ1u20aChhSQ14Su2dJ7lUu4JOHI1mPlmhnYM4VoEDteFtnSJlsbGn4dnYshnVwcOzs6QaJHSMnlwNuQlMvacbm4LpNdBe9fulzFvhi983mugt",
+  "auth_tokens": {
+    "rtic-token": "9BMrDzVcbZO3YNA132MdkdJf9sK6ujFg9WZ3yOZ8qh3iHTOH333IOmsnrEDMf7cvguH2qwUDe6FJSG8bqI9MdOERGHgHvSkUBW9IisX8CHxXpltjLa9yjrJQ18rQvISM",
+    "test-token": "5rOxqdjgo9ZMYhG10vCXmfjGIBOPdgbvmCjTQQJOAjYlbqbkUJglrlnTflOWVr0mGmJSXdJpvQpemsHdaitM3Vk0yw40iVoDGmk9AczisYcKdbuuW58Pv5xjQnmTkoJu"
+  },
   "probe_configs": [
     {
       "probe_serial": "0670FF525750877267012316",
