@@ -3,14 +3,18 @@
     "rtic-token": "9BMrDzVcbZO3YNA132MdkdJf9sK6ujFg9WZ3yOZ8qh3iHTOH333IOmsnrEDMf7cvguH2qwUDe6FJSG8bqI9MdOERGHgHvSkUBW9IisX8CHxXpltjLa9yjrJQ18rQvISM",
     "test-token": "5rOxqdjgo9ZMYhG10vCXmfjGIBOPdgbvmCjTQQJOAjYlbqbkUJglrlnTflOWVr0mGmJSXdJpvQpemsHdaitM3Vk0yw40iVoDGmk9AczisYcKdbuuW58Pv5xjQnmTkoJu"
   },
-  "probe_configs": [
-    {
-      "probe_serial": "0670FF525750877267012316",
-      "target_name": "STM32F746ZGTx"
+  "probe_configs": {
+    "0670FF525750877267012316": {
+      "target_name": "STM32F746ZGTx",
+      "probe_alias": "master1"
     },
-    {
-      "probe_serial": "066EFF494956805087153016",
-      "target_name": "STM32F411RETx"
+    "066EFF494956805087153016": {
+      "target_name": "STM32F411RETx",
+      "probe_alias": "slave1"
+    },
+    "000760040495": {
+      "target_name": "nRF52832_xxAA",
+      "probe_alias": "yolo2"
     }
-  ]
+  }
 }

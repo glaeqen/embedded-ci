@@ -1,3 +1,5 @@
+use crate::cli::{ProbeInfo, ProbeSerial};
+use anyhow::anyhow;
 use log::*;
 use num_enum::TryFromPrimitive;
 use probe_rs::{MemoryInterface, Probe, WireProtocol};
@@ -7,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
 
+/// The available types of CPUs this service supports.
 #[derive(
     Debug, Clone, Copy, TryFromPrimitive, Hash, PartialEq, Eq, JsonSchema, Serialize, Deserialize,
 )]
@@ -23,19 +26,21 @@ pub enum CpuId {
 }
 
 impl FromParam<'_> for CpuId {
-    type Error = ();
+    type Error = anyhow::Error;
 
     fn from_param(param: &str) -> Result<Self, Self::Error> {
+        let param: &str = &param.to_ascii_lowercase();
+
         Ok(match param {
-            "CortexM0" => CpuId::CortexM0,
-            "CortexM0Plus" => CpuId::CortexM0Plus,
-            "CortexM1" => CpuId::CortexM1,
-            "CortexM3" => CpuId::CortexM3,
-            "CortexM4" => CpuId::CortexM4,
-            "CortexM7" => CpuId::CortexM7,
-            "CortexM23" => CpuId::CortexM23,
-            "CortexM33" => CpuId::CortexM33,
-            _ => return Err(()),
+            "cortexm0" => CpuId::CortexM0,
+            "cortexm0plus" => CpuId::CortexM0Plus,
+            "cortexm1" => CpuId::CortexM1,
+            "cortexm3" => CpuId::CortexM3,
+            "cortexm4" => CpuId::CortexM4,
+            "cortexm7" => CpuId::CortexM7,
+            "cortexm23" => CpuId::CortexM23,
+            "cortexm33" => CpuId::CortexM33,
+            s => return Err(anyhow!("Unknown CPU '{}'", s)),
         })
     }
 }
@@ -45,7 +50,7 @@ macro_rules! skip_fail {
         match $res {
             Ok(val) => val,
             Err(e) => {
-                warn!("An error: {}; skipped.", e);
+                warn!("An error in probe & target detection: {}; skipped.", e);
                 continue;
             }
         }
@@ -71,9 +76,10 @@ fn get_mcus() -> HashMap<String, CpuId> {
     let mut mcus = HashMap::new();
 
     for probe in probes {
-        let serial = probe.serial_number.clone();
+        let serial = probe.serial_number.clone().unwrap();
+
         let mut probe = skip_fail!(probe.open());
-        skip_fail!(probe.target_reset());
+        // skip_fail!(probe.target_reset());
         skip_fail!(probe.select_protocol(WireProtocol::Swd));
 
         let mut session = skip_fail!(probe.attach("armv6m"));
@@ -84,24 +90,17 @@ fn get_mcus() -> HashMap<String, CpuId> {
         let cpuid_val = (value >> 4) & 0xfff;
         let cpuid = skip_fail!(CpuId::try_from_primitive(cpuid_val));
 
-        if let Some(serial) = serial {
-            mcus.insert(serial, cpuid);
-        }
+        mcus.insert(serial, cpuid);
     }
 
     mcus
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TargetSettings {
-    pub probe_serial: String,
-    pub target_name: String,
 }
 
 #[derive(JsonSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct Target {
     pub cpu_type: CpuId,
     pub probe_serial: String,
+    pub probe_alias: String,
     pub target_name: String,
 }
 
@@ -111,24 +110,24 @@ pub struct Targets {
 }
 
 impl Targets {
-    pub fn from_target_settings(target_settings: &[TargetSettings]) -> Self {
+    pub fn from_cli(target_settings: &HashMap<ProbeSerial, ProbeInfo>) -> anyhow::Result<Self> {
         let mut attached_targets = get_mcus();
         let mut targets = Vec::new();
 
-        for setting in target_settings {
-            if let Some((probe_serial, cpu_type)) =
-                attached_targets.remove_entry(&setting.probe_serial)
-            {
+        if attached_targets.is_empty() {
+            return Err(anyhow!("No targets attached to service (0 MCUs detected)"));
+        }
+
+        for (probe_serial, probe_info) in target_settings {
+            if let Some((probe_serial, cpu_type)) = attached_targets.remove_entry(&probe_serial.0) {
                 targets.push(Target {
                     cpu_type,
                     probe_serial,
-                    target_name: setting.target_name.clone(),
+                    probe_alias: probe_info.probe_alias.clone(),
+                    target_name: probe_info.target_name.clone(),
                 });
             } else {
-                warn!(
-                    "Probe with serial '{}' is not attached.",
-                    setting.probe_serial
-                );
+                warn!("Probe with serial '{}' is not attached.", probe_serial.0);
             }
         }
 
@@ -136,7 +135,7 @@ impl Targets {
             warn!("Probe with serial '{}' does not have a configuration.", ps);
         }
 
-        Targets { targets }
+        Ok(Targets { targets })
     }
 
     pub fn get_core(&self, core: &CpuId) -> Option<&Target> {
@@ -153,6 +152,12 @@ impl Targets {
         self.targets
             .iter()
             .find(|target| &target.target_name == target_name)
+    }
+
+    pub fn get_probe_alias(&self, probe_alias: &str) -> Option<&Target> {
+        self.targets
+            .iter()
+            .find(|target| &target.probe_alias == probe_alias)
     }
 
     pub fn all_targets(&self) -> &[Target] {

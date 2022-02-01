@@ -10,14 +10,17 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const THUMB_BIT: u32 = 1;
-pub const LR: CoreRegisterAddress = CoreRegisterAddress(14);
-pub const PC: CoreRegisterAddress = CoreRegisterAddress(15);
-pub const SP: CoreRegisterAddress = CoreRegisterAddress(13);
-pub const XPSR: CoreRegisterAddress = CoreRegisterAddress(16);
-pub const VTOR: Address = Address(0xE000ED08);
+const LR: CoreRegisterAddress = CoreRegisterAddress(14);
+const PC: CoreRegisterAddress = CoreRegisterAddress(15);
+const SP: CoreRegisterAddress = CoreRegisterAddress(13);
+const XPSR: CoreRegisterAddress = CoreRegisterAddress(16);
+const VTOR: Address = Address(0xE000ED08);
 
-pub struct Address(pub u32);
+// Internal helper to keep addresses and raw `u32`s apart.
+struct Address(pub u32);
 
+/// After the can of the binary is complete this enum holds the best guess of the kind of RTT
+/// that is used by the binary.
 enum RttType {
     Defmt {
         table: DefmtTable,
@@ -26,9 +29,13 @@ enum RttType {
     PlainText,
 }
 
+/// The main runner for embedded targets.
+///
+/// From here all access and handling of the embedded target happens as it's run by the service.
 pub struct Runner<'a> {
     target_name: &'a str,
     probe_serial: &'a str,
+    probe_speed_khz: Option<u32>,
     from_ram: bool,
     symbols: Symbols,
     vector_table: VectorTable,
@@ -36,22 +43,27 @@ pub struct Runner<'a> {
     elf_bytes: &'a [u8],
 }
 
-pub struct Symbols {
+/// Holds important symbol addresses.
+struct Symbols {
     main: Address,
     rtt: Address,
 }
 
-pub struct VectorTable {
+/// Holds important vector table addresses.
+struct VectorTable {
     start: Address,
     stack_pointer: Address,
     reset: Address,
     hardfault: Address,
 }
+
 impl<'a> Runner<'a> {
+    /// Create a new runner, for running a binary on a target, based on the ELF files and settings.
     pub fn new(
         elf_bytes: &'a [u8],
         target_name: &'a str,
         probe_serial: &'a str,
+        probe_speed_khz: Option<u32>,
     ) -> anyhow::Result<Runner<'a>> {
         let elf = File::parse(elf_bytes)
             .map_err(|e| anyhow!("ELF parsing error, file is not an ELF file: '{}'", e))?;
@@ -149,6 +161,7 @@ impl<'a> Runner<'a> {
         Ok(Runner {
             target_name,
             probe_serial,
+            probe_speed_khz,
             from_ram,
             symbols,
             vector_table: vector_table.ok_or(anyhow!("'.vector_table' section not found"))?,
@@ -157,9 +170,19 @@ impl<'a> Runner<'a> {
         })
     }
 
+    /// Run the `Runner` to completion with a timeout.
     pub fn run(&mut self, timeout: Duration) -> anyhow::Result<String> {
         let start = Instant::now();
-        let probe = self.get_probe()?;
+        let mut probe = self.get_probe()?;
+
+        if let Some(khz) = self.probe_speed_khz {
+            if let Err(e) = probe.set_speed(khz) {
+                error!(
+                    "{}; Unable to set probe speed, error: {:?}",
+                    self.probe_serial, e
+                );
+            }
+        }
 
         debug!("{}: Attaching to target", self.probe_serial);
         let mut session = probe.attach_under_reset(self.target_name)?;
@@ -173,12 +196,23 @@ impl<'a> Runner<'a> {
             opt.keep_unwritten_bytes = true;
 
             let mut loader = session.target().flash_loader();
-            loader.load_elf_data(&mut Cursor::new(&self.elf_bytes))?;
-            loader.commit(&mut session, opt)?;
+            loader
+                .load_elf_data(&mut Cursor::new(&self.elf_bytes))
+                .map_err(|e| anyhow!("Unable to program target: {}", e))?;
+            loader
+                .commit(&mut session, opt)
+                .map_err(|e| anyhow!("Unable to program target: {}", e))?;
         }
         debug!("{}: Done!", self.probe_serial);
 
         let mut core = session.core(0)?;
+
+        if self.from_ram {
+            // Fix for ECC RAM, do a dummy write. Thanks to @dirbaio for finding
+            let data = core.read_word_32(self.vector_table.start.0)?;
+            core.write_word_32(self.vector_table.start.0, data)?;
+        }
+
         core.reset_and_halt(Duration::from_secs(3))?;
 
         // Check so we have some breakpoint units
@@ -198,14 +232,16 @@ impl<'a> Runner<'a> {
             core.write_core_reg(SP, self.vector_table.stack_pointer.0)?;
             core.write_word_32(VTOR.0, self.vector_table.start.0)?;
         } else {
-            // Corrupt the rtt control block so that it's setup fresh again
-            // Only do this when running from flash, because when running from RAM the
-            // "fake-flashing to RAM" is what initializes it.
+            // Reset the RTT control block
             core.write_word_32(self.symbols.rtt.0, 0xdeadc0de)?;
 
-            core.set_hw_breakpoint(self.symbols.main.0)?;
-            core.run()?;
-            core.wait_for_core_halted(Duration::from_secs(5))?;
+            // Go to main
+            core.set_hw_breakpoint(self.symbols.main.0)
+                .map_err(|e| anyhow!("Unable to reach main: {}", e))?;
+            core.run()
+                .map_err(|e| anyhow!("Unable to reach main: {}", e))?;
+            core.wait_for_core_halted(Duration::from_secs(5))
+                .map_err(|e| anyhow!("Unable to reach main: {}", e))?;
             // const OFFSET: u32 = 44;
             // const FLAG: u32 = 2; // BLOCK_IF_FULL
             // core.write_word_32(self.symbols.rtt.0 + OFFSET, FLAG)?;
@@ -263,6 +299,7 @@ impl<'a> Runner<'a> {
         Ok(log)
     }
 
+    /// Convert a raw log from a target to an actual readable format.
     fn log_to_string(&mut self, buffer: Vec<u8>) -> anyhow::Result<String> {
         Ok(match &self.rtt_type {
             RttType::Defmt {
@@ -312,6 +349,7 @@ impl<'a> Runner<'a> {
         })
     }
 
+    /// Helper function to set up RTT channels and compensate for common errors.
     fn setup_rtt_channel(&mut self, session: &mut Session) -> anyhow::Result<UpChannel> {
         debug!("{}: Starting RTT pipe", self.probe_serial);
         let memory_map = session.target().memory_map.clone();
@@ -343,6 +381,7 @@ impl<'a> Runner<'a> {
         Ok(channel)
     }
 
+    /// Get this runner's probe.
     fn get_probe(&self) -> anyhow::Result<Probe> {
         let all_probes = Probe::list_all();
         let probe = all_probes

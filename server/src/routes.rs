@@ -1,9 +1,16 @@
 use crate::{
-    app::{JobStatus, RunQueue, RunJob},
+    app::{JobStatus, RunJob, RunQueue},
     target::Targets,
 };
 use log::*;
-use rocket::{get, post, serde::json::Json, State};
+use rocket::{
+    fairing::{Fairing, Info, Kind},
+    get,
+    http::Header,
+    post,
+    serde::json::Json,
+    Request, Response, State,
+};
 use rocket_okapi::swagger_ui::{make_swagger_ui, SwaggerUIConfig};
 use rocket_okapi::{openapi, openapi_get_routes};
 use std::sync::{Arc, Mutex};
@@ -55,8 +62,31 @@ fn test_token(_token: crate::auth::Token) -> Json<String> {
     Json("hello with token".to_string())
 }
 
+pub struct CORS;
+
+#[rocket::async_trait]
+impl Fairing for CORS {
+    fn info(&self) -> Info {
+        Info {
+            name: "Attaching CORS headers to responses",
+            kind: Kind::Response,
+        }
+    }
+
+    async fn on_response<'r>(&self, _request: &'r Request<'_>, response: &mut Response<'r>) {
+        response.set_header(Header::new("Access-Control-Allow-Origin", "*"));
+        response.set_header(Header::new(
+            "Access-Control-Allow-Methods",
+            "POST, GET, PATCH, OPTIONS",
+        ));
+        response.set_header(Header::new("Access-Control-Allow-Headers", "*"));
+        response.set_header(Header::new("Access-Control-Allow-Credentials", "true"));
+    }
+}
+
 pub async fn serve_routes(state: Arc<Mutex<RunQueue>>) -> Result<(), rocket::Error> {
     rocket::build()
+        .attach(CORS)
         // .mount("/", routes![index])
         .mount(
             "/",

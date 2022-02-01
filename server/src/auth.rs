@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-static TOKEN: OnceCell<HashMap<String, String>> = OnceCell::new();
+static TOKEN: OnceCell<HashMap<AuthName, AuthToken>> = OnceCell::new();
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Token;
@@ -34,10 +34,10 @@ impl<'r> FromRequest<'r> for Token {
                 debug!("Token: {}", token);
 
                 if token.starts_with("Bearer ") {
-                    let token = &token[7..];
+                    let token_to_check = &token[7..];
 
-                    for (_, accepted_token) in TOKEN.get().unwrap() {
-                        if accepted_token == token {
+                    for (_, valid_token) in TOKEN.get().unwrap() {
+                        if valid_token.0 == token_to_check {
                             return request::Outcome::Success(Token);
                         }
                     }
@@ -55,6 +55,8 @@ use rocket::Response;
 use rocket_okapi::request::{OpenApiFromRequest, RequestHeaderInput};
 use rocket_okapi::response::OpenApiResponder;
 use rocket_okapi::{self, gen::OpenApiGenerator};
+
+use crate::cli::{AuthName, AuthToken};
 
 //rocket_okapi::Result<Parameter>;
 impl<'a, 'r> OpenApiFromRequest<'a> for Token {
@@ -96,6 +98,6 @@ impl<'a, 'r: 'a> rocket::response::Responder<'a, 'r> for Token {
     }
 }
 
-pub fn set_token(arg: HashMap<String, String>) {
+pub fn set_token(arg: HashMap<AuthName, AuthToken>) {
     TOKEN.set(arg).unwrap()
 }

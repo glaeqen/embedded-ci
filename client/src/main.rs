@@ -32,11 +32,9 @@ async fn main() -> anyhow::Result<()> {
     } else {
         client
     };
-    let run = client.json(&run_test).send().await?.text().await?;
+    let res: Result<u32, String> = client.json(&run_test).send().await?.json().await?;
 
-    println!("'/run_test': {}", run);
-
-    let res: Result<u32, String> = serde_json::from_str(&run)?;
+    // println!("'/run_test': {}", run);
 
     match res {
         Ok(val) => loop {
@@ -47,6 +45,7 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 client
             };
+            // replace .text() with .json()
             let body = client.send().await?.text().await?;
 
             println!("Job {} status: {}", val, body);

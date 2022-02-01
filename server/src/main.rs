@@ -15,11 +15,23 @@ use target::Targets;
 async fn main() -> anyhow::Result<()> {
     pretty_env_logger::init();
 
-    let cli = cli::cli();
+    let cli = match cli::cli() {
+        Ok(v) => v,
+        Err(e) => {
+            println!("Error in startup: {}", e);
+            std::process::exit(1);
+        }
+    };
 
     auth::set_token(cli.auth_tokens);
 
-    let targets = Targets::from_target_settings(&cli.probe_configs);
+    let targets = match Targets::from_cli(&cli.probe_configs) {
+        Ok(v) => v,
+        Err(e) => {
+            println!("Error in startup: {}", e);
+            std::process::exit(1);
+        }
+    };
 
     info!("Targets: {:#?}", targets);
 
@@ -29,7 +41,8 @@ async fn main() -> anyhow::Result<()> {
     let _rocket_handle = tokio::spawn(async move { routes::serve_routes(rocket_jobs).await });
 
     let backend_jobs = jobs.clone();
-    let _backend_handle = tokio::spawn(async move { app::Backend::run(backend_jobs).await });
+    let _backend_handle =
+        tokio::spawn(async move { app::Backend::run(backend_jobs, cli.probe_configs).await });
 
     match signal::ctrl_c().await {
         Ok(()) => {}
