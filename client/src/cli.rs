@@ -7,10 +7,10 @@ use std::path::PathBuf;
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    #[clap(short, long, default_value = "http://localhost:8000")]
+    #[clap(short, long, default_value = "http://localhost:8000", env = "EMBEDDED_CI_SERVER")]
     server: Url,
 
-    #[clap(short, long)]
+    #[clap(short, long, env = "EMBEDDED_CI_TOKEN")]
     auth_token: Option<String>,
 
     #[clap(short, long)]

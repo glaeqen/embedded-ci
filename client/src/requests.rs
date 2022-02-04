@@ -45,3 +45,29 @@ pub struct RunJob {
     pub binary_b64: String,
     pub timeout_secs: u8,
 }
+
+/// The current status of a job.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub enum JobStatus {
+    /// Waiting, an embedded runner has not yet accepted this job.
+    WaitingInQueue,
+    /// Running, an embedded runner is actively running this job.
+    Running,
+    /// Done, the job has finished successfully.
+    Done { log: String },
+    /// Error, the job has finished with error (the string holds the specific error).
+    Error(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Targets {
+    pub targets: Vec<Target>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Target {
+    pub cpu_type: CpuId,
+    pub probe_serial: String,
+    pub probe_alias: String,
+    pub target_name: String,
+}

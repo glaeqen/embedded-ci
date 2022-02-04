@@ -1,4 +1,7 @@
+use anyhow::anyhow;
+use log::*;
 use std::{fs, time::Duration};
+use tokio::time;
 
 mod cli;
 mod requests;
@@ -15,9 +18,10 @@ async fn main() -> anyhow::Result<()> {
     } else {
         client
     };
-    let body = client.send().await?.text().await?;
+    let body: requests::Targets = client.send().await?.json().await?;
 
-    println!("'/': {}", body);
+    info!("Target info:\n{:?}", body);
+    // println!("'/': {}", body);
 
     let elf_file = fs::read(cli.elf_file)?;
     let run_test = requests::RunJob {
@@ -34,8 +38,6 @@ async fn main() -> anyhow::Result<()> {
     };
     let res: Result<u32, String> = client.json(&run_test).send().await?.json().await?;
 
-    // println!("'/run_test': {}", run);
-
     match res {
         Ok(val) => loop {
             let client =
@@ -45,14 +47,32 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 client
             };
-            // replace .text() with .json()
-            let body = client.send().await?.text().await?;
 
-            println!("Job {} status: {}", val, body);
+            let body: Result<requests::JobStatus, String> = client.send().await?.json().await?;
 
-            std::thread::sleep(Duration::from_secs(1));
+            match body {
+                Ok(status) => match status {
+                    requests::JobStatus::WaitingInQueue => info!("{}: Waiting in queue...", val),
+                    requests::JobStatus::Running => info!("{}: Running...", val),
+                    requests::JobStatus::Done { log } => {
+                        info!("{}: Finished successfully with log:", val);
+                        println!("{}", log);
+                        break;
+                    }
+                    requests::JobStatus::Error(err) => {
+                        return Err(anyhow!("{}: Finished with error: {}", val, err));
+                    }
+                },
+                Err(err) => {
+                    return Err(anyhow!("{}: Request failure with error: {}", val, err));
+                }
+            }
+
+            time::sleep(Duration::from_secs(1)).await;
         },
-        Err(err) => {}
+        Err(err) => {
+            return Err(anyhow!("Error in request to CI: {}", err));
+        }
     }
 
     Ok(())
