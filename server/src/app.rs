@@ -183,7 +183,7 @@ impl Worker {
     /// Main async runner for a worker.
     async fn run(&mut self) {
         loop {
-            tokio::time::sleep(Duration::from_secs(10)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
 
             trace!("{}: Run loop for probe", self.probe_serial);
 
@@ -248,5 +248,42 @@ impl Worker {
         debug!("{}: Runner exit status: {:?}", self.probe_serial, run);
 
         run
+    }
+}
+
+/// This handles the cleanup of finished jobs.
+pub struct Cleanup {}
+
+impl Cleanup {
+    /// Start the cleanup job given the run queue, this cleans up old and expired jobs over time.
+    pub async fn run(run_queue: Arc<Mutex<RunQueue>>) {
+        info!("Starting job cleanup worker");
+
+        let mut to_cleanup = Vec::new();
+        loop {
+            // We do cleanup once per minute
+            tokio::time::sleep(Duration::from_secs(60)).await;
+
+            let jobs = &mut run_queue.lock().unwrap().jobs;
+
+            debug!("Running cleanup of finished jobs...");
+
+            for id in to_cleanup.drain(..) {
+                debug!("    Cleaning up job ID {}...", id);
+                jobs.remove_entry(&id);
+            }
+
+            jobs.shrink_to_fit();
+
+            for (job_id, (job_status, _)) in jobs {
+                match job_status {
+                    JobStatus::Done { log: _ } | JobStatus::Error(_) => {
+                        // Add to next round of cleanup
+                        to_cleanup.push(*job_id);
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 }

@@ -44,6 +44,9 @@ async fn main() -> anyhow::Result<()> {
     let _backend_handle =
         tokio::spawn(async move { app::Backend::run(backend_jobs, cli.probe_configs).await });
 
+    let cleanup_jobs = jobs.clone();
+    let _cleanup_handle = tokio::spawn(async move { app::Cleanup::run(cleanup_jobs).await });
+
     match signal::ctrl_c().await {
         Ok(()) => {}
         Err(err) => {
