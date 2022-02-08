@@ -1,9 +1,11 @@
 use anyhow::anyhow;
 use defmt_decoder::{DecodeError, Locations as DefmtLocations, Table as DefmtTable};
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use object::{File, Object, ObjectSection, ObjectSymbol};
-use probe_rs::config::MemoryRegion;
-use probe_rs::{flashing::DownloadOptions, CoreRegisterAddress, MemoryInterface, Session};
+use probe_rs::{
+    flashing::{DownloadOptions, FileDownloadError, FlashError},
+    CoreRegisterAddress, MemoryInterface, Session,
+};
 use probe_rs::{CoreStatus, DebugProbeError, HaltReason, Probe, ProbeCreationError};
 use probe_rs_rtt::{Rtt, ScanRegion, UpChannel};
 use std::io::Cursor;
@@ -11,11 +13,30 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const THUMB_BIT: u32 = 1;
-const LR: CoreRegisterAddress = CoreRegisterAddress(14);
+//const LR: CoreRegisterAddress = CoreRegisterAddress(14);
 const PC: CoreRegisterAddress = CoreRegisterAddress(15);
 const SP: CoreRegisterAddress = CoreRegisterAddress(13);
 const PSR: CoreRegisterAddress = CoreRegisterAddress(16);
 const VTOR: Address = Address(0xE000ED08);
+
+/// Error definitions for runner.
+#[derive(thiserror::Error, Debug)]
+pub enum RunnerError {
+    #[error("ELF file error: {0}")]
+    ElfError(String),
+    #[error("A flashing error occurred")]
+    FlashError(#[from] FlashError),
+    #[error("A file download error occurred")]
+    FileDownloadError(#[from] FileDownloadError),
+    #[error("A debug probe error occurred")]
+    DebugProbeError(#[from] DebugProbeError),
+    #[error("A runner error occurred")]
+    ProbeRs(#[from] probe_rs::Error),
+    #[error("An RTT error occurred")]
+    ProbeRsRtt(#[from] probe_rs_rtt::Error),
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
 
 // Internal helper to keep addresses and raw `u32`s apart.
 struct Address(pub u32);
@@ -25,7 +46,7 @@ struct Address(pub u32);
 enum RttType {
     Defmt {
         table: DefmtTable,
-        locations: DefmtLocations,
+        _locations: DefmtLocations,
     },
     PlainText,
 }
@@ -65,7 +86,7 @@ impl<'a> Runner<'a> {
         target_name: &'a str,
         probe_serial: &'a str,
         probe_speed_khz: Option<u32>,
-    ) -> anyhow::Result<Runner<'a>> {
+    ) -> Result<Runner<'a>, RunnerError> {
         let elf = File::parse(elf_bytes)
             .map_err(|e| anyhow!("ELF parsing error, file is not an ELF file: '{}'", e))?;
 
@@ -113,18 +134,23 @@ impl<'a> Runner<'a> {
             if important_sections.contains(&name) {
                 if addr % 4 != 0 {
                     // Can sections be unaligned?
-                    return Err(anyhow!("Section '{}' is not 4 byte aligned", name));
+                    return Err(RunnerError::ElfError(format!(
+                        "Section '{}' is not 4 byte aligned",
+                        name
+                    )));
                 }
 
                 // If it is the vector table, get important addresses from it
                 if name == ".vector_table" {
-                    let data = section.data()?;
+                    let data = section.data().map_err(|_| {
+                        RunnerError::ElfError(format!("There is no data in section '{}'", name))
+                    })?;
                     if data.len() < 16 {
-                        return Err(anyhow!(
+                        return Err(RunnerError::ElfError(format!(
                             "Section '{}' is too small, size = {} bytes",
                             name,
                             data.len()
-                        ));
+                        )));
                     }
 
                     let vt: Vec<_> = data
@@ -133,7 +159,12 @@ impl<'a> Runner<'a> {
                         .collect();
 
                     vector_table = Some(VectorTable {
-                        start: Address(addr.try_into()?),
+                        start: Address(addr.try_into().map_err(|_| {
+                            RunnerError::ElfError(format!(
+                                "The address of section '{}' is not 32-bit",
+                                name
+                            ))
+                        })?),
                         stack_pointer: Address(vt[0]),
                         reset: Address(vt[1]),
                         hardfault: Address(vt[3]),
@@ -148,11 +179,14 @@ impl<'a> Runner<'a> {
             let locations = table.get_locations(&elf_bytes)?;
 
             if !table.is_empty() && locations.is_empty() {
-                return Err(anyhow!(
-                    "'.defmt' symbol found but not enough debug information for defmt, enable debug symbols (debug = 2)"
+                return Err(RunnerError::ElfError(
+                    "'.defmt' symbol found but not enough debug information for defmt, enable debug symbols (debug = 2)".into()
                 ));
             } else {
-                RttType::Defmt { table, locations }
+                RttType::Defmt {
+                    table,
+                    _locations: locations,
+                }
             }
         } else {
             // The defmt table parsing returned none, so there is no `.defmt` section
@@ -172,7 +206,7 @@ impl<'a> Runner<'a> {
     }
 
     /// Run the `Runner` to completion with a timeout.
-    pub fn run(&mut self, timeout: Duration) -> anyhow::Result<String> {
+    pub fn run(&mut self, timeout: Duration) -> Result<String, RunnerError> {
         let probe = self.get_probe(self.probe_speed_khz)?;
 
         debug!("{}: Attaching to target", self.probe_serial);
@@ -187,54 +221,16 @@ impl<'a> Runner<'a> {
                 );
 
                 let probe = self.get_probe(self.probe_speed_khz)?;
-                probe
-                    .attach_under_reset(self.target_name)
-                    .map_err(|_| 
-                        anyhow!("Unable to attach to the target, both normal and attach under reset failed")
-                    )?
+                probe.attach_under_reset(self.target_name).map_err(|_| {
+                    anyhow!(
+                        "Unable to attach to the target, both normal and attach under reset failed"
+                    )
+                })?
             }
         };
 
         debug!("{}: Starting download of ELF", self.probe_serial);
         {
-            let memory_map = &session.target().memory_map;
-
-            // Check so the memory is in the proper place
-            let mut correct = false;
-            let mut possible_regions = String::new();
-            if self.from_ram {
-                for region in memory_map {
-                    if let MemoryRegion::Ram(ram) = region {
-                        possible_regions.push_str(&format!("{:x?}, ", ram.range));
-                        if ram.range.contains(&self.symbols.main.0) {
-                            correct = true;
-                            break;
-                        }
-                    }
-                }
-            } else {
-                for region in memory_map {
-                    if let MemoryRegion::Nvm(flash) = region {
-                        possible_regions.push_str(&format!("{:#010x?}, ", flash.range));
-                        if flash.range.contains(&self.symbols.main.0) {
-                            correct = true;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            possible_regions.pop();
-            possible_regions.pop();
-
-            if !correct {
-                return Err(
-                    anyhow!("The memory region to be downloaded in the binary does not align with any memory region in the connected target.\nAre you using an incorrect linker script?\nAvailable regions: {}\n'main' is at {:#010x}, and violates the available memory!", 
-                    possible_regions, 
-                    self.symbols.main.0)
-                );
-            }
-
             session.core(0)?.reset_and_halt(Duration::from_secs(3))?;
 
             let mut opt = DownloadOptions::default();
@@ -242,12 +238,9 @@ impl<'a> Runner<'a> {
             opt.keep_unwritten_bytes = true;
 
             let mut loader = session.target().flash_loader();
-            loader
-                .load_elf_data(&mut Cursor::new(&self.elf_bytes))
-                .map_err(|e| anyhow!("Unable to program target: {}", e))?;
-            loader
-                .commit(&mut session, opt)
-                .map_err(|e| anyhow!("Unable to program target: {}", e))?;
+            loader.load_elf_data(&mut Cursor::new(&self.elf_bytes))?;
+
+            loader.commit(&mut session, opt)?;
         }
         debug!("{}: Done!", self.probe_serial);
 
@@ -282,12 +275,10 @@ impl<'a> Runner<'a> {
             core.write_word_32(self.symbols.rtt.0, 0xdeadc0de)?;
 
             // Go to main
-            core.set_hw_breakpoint(self.symbols.main.0)
-                .map_err(|e| anyhow!("Unable to reach main: {}", e))?;
-            core.run()
-                .map_err(|e| anyhow!("Unable to reach main: {}", e))?;
-            core.wait_for_core_halted(Duration::from_secs(5))
-                .map_err(|e| anyhow!("Unable to reach main: {}", e))?;
+            core.set_hw_breakpoint(self.symbols.main.0)?;
+
+            core.run()?;
+            core.wait_for_core_halted(Duration::from_secs(5))?;
             // const OFFSET: u32 = 44;
             // const FLAG: u32 = 2; // BLOCK_IF_FULL
             // core.write_word_32(self.symbols.rtt.0 + OFFSET, FLAG)?;
@@ -295,8 +286,7 @@ impl<'a> Runner<'a> {
             core.clear_hw_breakpoint(self.symbols.main.0)?;
         }
 
-        core.set_hw_breakpoint(self.vector_table.hardfault.0 & !THUMB_BIT)
-            .map_err(|e| anyhow!("Unable to break on hardfault: {}", e))?;
+        core.set_hw_breakpoint(self.vector_table.hardfault.0 & !THUMB_BIT)?;
 
         core.run()?;
 
@@ -313,9 +303,7 @@ impl<'a> Runner<'a> {
             // thread::sleep(Duration::from_millis(1));
 
             // Read from an RTT channel.
-            let count = channel
-                .read(&mut core, &mut read_buf[..])
-                .map_err(|e| anyhow!(e))?;
+            let count = channel.read(&mut core, &mut read_buf[..])?;
             buffer.extend_from_slice(&read_buf[..count]);
 
             if core.core_halted()? {
@@ -351,7 +339,7 @@ impl<'a> Runner<'a> {
                     let return_address = core.read_core_reg(core.registers().return_address())?;
                     let hfsr = core.read_word_32(0xE000_ED2C)?;
 
-                    error!("{}: Halted due to hardfault", self.probe_serial);
+                    warn!("{}: Halted due to hardfault", self.probe_serial);
                     if hfsr & (1 << 30) != 0 {
                         let cfsr = core.read_word_32(0xE000_ED28)?;
 
@@ -384,29 +372,31 @@ impl<'a> Runner<'a> {
                             "Core halted for hardfault\n{}\nPartial log:\n{}",
                             report,
                             log
-                        ));
+                        )
+                        .into());
                     }
 
                     return Err(anyhow!(
                         "Core halted for hardfault (LR = {:#010x}), partial log:\n{}",
                         return_address,
                         log
-                    ));
+                    )
+                    .into());
                 } else {
                     debug!("{}: Halted due to breakpoint", self.probe_serial);
                 }
             }
             CoreStatus::Halted(h) => {
-                return Err(anyhow!("Core halted for unknown reason: {:?}", h));
+                return Err(anyhow!("Core halted for unknown reason: {:?}", h).into());
             }
             CoreStatus::LockedUp => {
-                return Err(anyhow!("Core locked up, partial log:\n{}", log));
+                return Err(anyhow!("Core locked up, partial log:\n{}", log).into());
             }
             CoreStatus::Sleeping => {
-                return Err(anyhow!("Core sleeping, partial log:\n{}", log));
+                return Err(anyhow!("Core sleeping, partial log:\n{}", log).into());
             }
             CoreStatus::Unknown => {
-                return Err(anyhow!("Core status unknown, partial log:\n{}", log));
+                return Err(anyhow!("Core status unknown, partial log:\n{}", log).into());
             }
             _ => {}
         }
@@ -422,11 +412,11 @@ impl<'a> Runner<'a> {
     }
 
     /// Convert a raw log from a target to an actual readable format.
-    fn log_to_string(&mut self, buffer: Vec<u8>) -> anyhow::Result<String> {
+    fn log_to_string(&mut self, buffer: Vec<u8>) -> Result<String, RunnerError> {
         Ok(match &self.rtt_type {
             RttType::Defmt {
                 table,
-                locations: _,
+                _locations: _,
             } => {
                 debug!(
                     "{}: Detected defmt log - decoding, buffer size = {} bytes",
@@ -453,7 +443,8 @@ impl<'a> Runner<'a> {
                             if table.encoding().can_recover() {
                                 continue;
                             } else {
-                                return Err(anyhow!("defmt stream is malformed, aborting"));
+                                warn!("{}: defmt stream is malformed, aborting", self.probe_serial);
+                                return Ok(log);
                             }
                         }
                         Err(DecodeError::UnexpectedEof) => {
@@ -477,7 +468,7 @@ impl<'a> Runner<'a> {
     }
 
     /// Helper function to set up RTT channels and compensate for common errors.
-    fn setup_rtt_channel(&mut self, session: &mut Session) -> anyhow::Result<UpChannel> {
+    fn setup_rtt_channel(&mut self, session: &mut Session) -> Result<UpChannel, RunnerError> {
         debug!("{}: Starting RTT pipe", self.probe_serial);
         let memory_map = session.target().memory_map.clone();
         let mut core = session.core(0)?;
@@ -493,10 +484,10 @@ impl<'a> Runner<'a> {
                 Err(probe_rs_rtt::Error::ControlBlockNotFound) => {
                     thread::sleep(Duration::from_millis(10));
                     if Instant::now() - start > Duration::from_secs(3) {
-                        return Err(anyhow!("Unable to attach to RTT: 'ControlBlockNotFound'"));
+                        return Err(probe_rs_rtt::Error::ControlBlockNotFound.into());
                     }
                 }
-                Err(e) => return Err(anyhow!(e)),
+                Err(e) => return Err(e.into()),
             }
         };
 
@@ -509,7 +500,7 @@ impl<'a> Runner<'a> {
     }
 
     /// Get this runner's probe.
-    fn get_probe(&self, probe_speed_khz: Option<u32>) -> anyhow::Result<Probe> {
+    fn get_probe(&self, probe_speed_khz: Option<u32>) -> Result<Probe, RunnerError> {
         let all_probes = Probe::list_all();
         let mut probe = all_probes
             .iter()

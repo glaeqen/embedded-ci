@@ -1,6 +1,6 @@
 use crate::{
     cli::{ProbeInfo, ProbeSerial},
-    runner,
+    runner::{self, RunnerError},
     target::{CpuId, Target, Targets},
 };
 use anyhow::anyhow;
@@ -224,7 +224,7 @@ impl Worker {
 
                     match test_res {
                         Ok(log) => *job_status = JobStatus::Done { log },
-                        Err(e) => *job_status = JobStatus::Error(e.to_string()),
+                        Err(e) => *job_status = JobStatus::Error(unroll_error(&e)),
                     }
                 }
             }
@@ -232,7 +232,7 @@ impl Worker {
     }
 
     /// Run a job on the worker.
-    fn run_test(&mut self, test_specification: &RunJob) -> anyhow::Result<String> {
+    fn run_test(&mut self, test_specification: &RunJob) -> Result<String, RunnerError> {
         let elf_file = base64::decode(&test_specification.binary_b64)
             .map_err(|_| anyhow!("Firmware is not b64"))?;
 
@@ -249,6 +249,23 @@ impl Worker {
 
         run
     }
+}
+
+fn unroll_error(e: &dyn std::error::Error) -> String {
+    let mut s = String::new();
+    let mut level = 0;
+
+    s.push_str(&format!("\n{}: {}", level, e));
+
+    let mut source = e.source();
+
+    while let Some(e) = source {
+        level += 1;
+        s.push_str(&format!("\n{}: {}", level, e));
+        source = e.source();
+    }
+
+    s
 }
 
 /// This handles the cleanup of finished jobs.
