@@ -1,7 +1,5 @@
-use crate::{
-    app::{JobStatus, RunJob, RunQueue},
-    target::Targets,
-};
+use crate::app::RunQueue;
+use embedded_ci_server::{JobStatus, RunJob, Targets};
 use log::*;
 use rocket::{
     fairing::{Fairing, Info, Kind},

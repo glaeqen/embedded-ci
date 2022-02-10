@@ -1,5 +1,5 @@
-use crate::requests::{CpuId, RunOn};
 use clap::Parser;
+use embedded_ci_server::{CpuId, RunOn, TargetName};
 use reqwest::Url;
 use std::path::PathBuf;
 
@@ -7,7 +7,12 @@ use std::path::PathBuf;
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    #[clap(short, long, default_value = "http://localhost:8000", env = "EMBEDDED_CI_SERVER")]
+    #[clap(
+        short,
+        long,
+        default_value = "http://localhost:8000",
+        env = "EMBEDDED_CI_SERVER"
+    )]
     server: Url,
 
     #[clap(short, long, env = "EMBEDDED_CI_TOKEN")]
@@ -34,7 +39,7 @@ pub fn cli() -> Cli {
     let args = Args::parse();
 
     let run_on = match (args.target, args.core) {
-        (Some(target), None) => RunOn::Target(target),
+        (Some(target), None) => RunOn::Target(TargetName(target)),
         (None, Some(core)) => RunOn::Core(core),
         (None, None) => {
             println!("Error: Only one of --target or --core can be used at the same time");

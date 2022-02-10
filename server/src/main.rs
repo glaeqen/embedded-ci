@@ -9,8 +9,6 @@ mod routes;
 mod runner;
 mod target;
 
-use target::Targets;
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     pretty_env_logger::init();
@@ -25,7 +23,7 @@ async fn main() -> anyhow::Result<()> {
 
     auth::set_token(cli.auth_tokens);
 
-    let targets = match Targets::from_cli(&cli.probe_configs) {
+    let targets = match cli::from_cli(&cli.probe_configs) {
         Ok(v) => v,
         Err(e) => {
             println!("Error in startup: {}", e);

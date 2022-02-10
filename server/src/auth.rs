@@ -56,7 +56,7 @@ use rocket_okapi::request::{OpenApiFromRequest, RequestHeaderInput};
 use rocket_okapi::response::OpenApiResponder;
 use rocket_okapi::{self, gen::OpenApiGenerator};
 
-use crate::cli::{AuthName, AuthToken};
+use embedded_ci_server::{AuthName, AuthToken};
 
 //rocket_okapi::Result<Parameter>;
 impl<'a, 'r> OpenApiFromRequest<'a> for Token {

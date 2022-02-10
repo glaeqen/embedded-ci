@@ -56,11 +56,11 @@ mod app {
 
         *cx.local.cnt += 1;
 
-        if *cx.local.cnt == 2 {
-            unsafe {
-                core::ptr::read_volatile(0xFFFFFFF as *const u32);
-            }
-        }
+        // if *cx.local.cnt == 2 {
+        //     unsafe {
+        //         core::ptr::read_volatile(0xFFFFFFF as *const u32);
+        //     }
+        // }
 
         if *cx.local.cnt > 3 {
             exit();

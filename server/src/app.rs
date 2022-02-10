@@ -1,65 +1,16 @@
 use crate::{
-    cli::{ProbeInfo, ProbeSerial},
+    cli::ProbeInfo,
     runner::{self, RunnerError},
-    target::{CpuId, Target, Targets},
 };
 use anyhow::anyhow;
+use embedded_ci_server::{
+    CpuId, JobStatus, ProbeAlias, ProbeSerial, RunJob, RunOn, Target, TargetName, Targets,
+};
 use log::*;
 use rand::prelude::*;
-use rocket_okapi::JsonSchema;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-
-/// On which target a job should run on.
-#[derive(Clone, Debug, JsonSchema, Serialize, Deserialize)]
-pub enum RunOn {
-    /// Run on a specific probe serial number.
-    ProbeSerial(String),
-    /// Run on a specific probe alias.
-    ProbeAlias(String),
-    /// Run on a specific target name.
-    Target(String),
-    /// Run on a specific core type.
-    Core(CpuId),
-}
-
-impl RunOn {
-    /// Helper to check this parameter.
-    fn is_valid(&self) -> bool {
-        match self {
-            RunOn::ProbeSerial(serial) => !serial.is_empty(),
-            RunOn::ProbeAlias(alias) => !alias.is_empty(),
-            RunOn::Target(target) => !target.is_empty(),
-            RunOn::Core(_) => true,
-        }
-    }
-}
-
-/// A job specification for a run.
-#[derive(Clone, Debug, JsonSchema, Serialize, Deserialize)]
-pub struct RunJob {
-    /// On which embedded target should this job run on.
-    pub run_on: RunOn,
-    /// The ELF file holding the binary and debug symbols.
-    pub binary_b64: String,
-    /// Timeout of the job in seconds.
-    pub timeout_secs: u8,
-}
-
-/// The current status of a job.
-#[derive(Debug, JsonSchema, Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub enum JobStatus {
-    /// Waiting, an embedded runner has not yet accepted this job.
-    WaitingInQueue,
-    /// Running, an embedded runner is actively running this job.
-    Running,
-    /// Done, the job has finished successfully.
-    Done { log: String },
-    /// Error, the job has finished with error (the string holds the specific error).
-    Error(String),
-}
 
 /// This is the communication channel between the REST API and the embedded runners.
 ///
@@ -115,11 +66,13 @@ impl RunQueue {
         } else {
             let s = match &test.run_on {
                 RunOn::ProbeSerial(serial) => {
-                    format!("Probe with serial '{}' does not exist", serial)
+                    format!("Probe with serial '{}' does not exist", serial.0)
                 }
-                RunOn::ProbeAlias(alias) => format!("Probe with alias '{}' does not exist", alias),
+                RunOn::ProbeAlias(alias) => {
+                    format!("Probe with alias '{}' does not exist", alias.0)
+                }
                 RunOn::Target(target_name) => {
-                    format!("Target with name '{}' does not exist", target_name)
+                    format!("Target with name '{}' does not exist", target_name.0)
                 }
                 RunOn::Core(cpu_id) => format!("Core of type '{:?}' does not exist", cpu_id),
             };
@@ -142,23 +95,21 @@ impl Backend {
         let queue = run_queue.lock().unwrap();
 
         for target in queue.get_targets().all_targets() {
-            let probe_config = probe_configs
-                .get(&ProbeSerial(target.probe_serial.clone()))
-                .unwrap();
+            let probe_config = probe_configs.get(&target.probe_serial).unwrap();
             let mut worker =
                 Worker::from_target(target, run_queue.clone(), probe_config.probe_speed_khz);
             let _worker_handle = tokio::spawn(async move { worker.run().await });
-            info!("Started worker for probe {}", target.probe_serial);
+            info!("Started worker for probe {}", target.probe_serial.0);
         }
     }
 }
 
 /// Async worker for an embedded target.
 struct Worker {
-    probe_serial: String,
-    probe_alias: String,
+    probe_serial: ProbeSerial,
+    probe_alias: ProbeAlias,
     probe_speed_khz: Option<u32>,
-    target_name: String,
+    target_name: TargetName,
     cpu_type: CpuId,
     jobs: Arc<Mutex<RunQueue>>,
 }
@@ -185,7 +136,7 @@ impl Worker {
         loop {
             tokio::time::sleep(Duration::from_secs(1)).await;
 
-            trace!("{}: Run loop for probe", self.probe_serial);
+            trace!("{}: Run loop for probe", self.probe_serial.0);
 
             let mut id = None;
             {
@@ -204,7 +155,7 @@ impl Worker {
                             };
 
                         if for_us {
-                            info!("{}: Accepted job with ID {}", self.probe_serial, test_id);
+                            info!("{}: Accepted job with ID {}", self.probe_serial.0, test_id);
                             id = Some((*test_id, test_spec.clone()));
                             *job_status = JobStatus::Running;
 
@@ -220,7 +171,7 @@ impl Worker {
 
                 let mut jobs = self.jobs.lock().unwrap();
                 if let Some((job_status, _test_spec)) = jobs.jobs.get_mut(&id) {
-                    info!("{}: Finished job with ID {}", self.probe_serial, id);
+                    info!("{}: Finished job with ID {}", self.probe_serial.0, id);
 
                     match test_res {
                         Ok(log) => *job_status = JobStatus::Done { log },
@@ -245,13 +196,14 @@ impl Worker {
 
         let run = runner.run(Duration::from_secs(test_specification.timeout_secs.into()));
 
-        debug!("{}: Runner exit status: {:?}", self.probe_serial, run);
+        debug!("{}: Runner exit status: {:?}", self.probe_serial.0, run);
 
         run
     }
 }
 
-fn unroll_error(e: &dyn std::error::Error) -> String {
+/// Unrolls errors.
+pub fn unroll_error(e: &dyn std::error::Error) -> String {
     let mut s = String::new();
     let mut level = 0;
 

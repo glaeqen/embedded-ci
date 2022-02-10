@@ -4,6 +4,14 @@ version = "0.1.0"
 edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+# [lib]
+# name = "embedded_ci_server"
+# path = "src/lib.rs"
+# 
+# [[bin]]
+# name = "embedded_ci_server"
+# path = "src/main.rs"
+
 [dependencies]
 anyhow = "1.0.53"
 base64 = "0.13.0"

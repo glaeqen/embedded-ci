@@ -1,11 +1,16 @@
 use anyhow::anyhow;
 use clap::Parser;
+use embedded_ci_server::{
+    AuthName, AuthToken, ProbeAlias, ProbeSerial, Target, TargetName, Targets,
+};
+use log::*;
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+
+use crate::target::get_mcus;
 
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
@@ -20,28 +25,12 @@ struct Args {
     new_token: Option<String>,
 }
 
-/// Probe serial wrapper.
-#[derive(
-    Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
-)]
-pub struct ProbeSerial(pub String);
-
-/// Name of an authorization token wrapper.
-#[derive(
-    Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
-)]
-pub struct AuthName(pub String);
-
-/// Authorization token wrapper.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AuthToken(pub String);
-
 /// Information about a probe, used for storing and reading configurations.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ProbeInfo {
-    pub target_name: String,
+    pub target_name: TargetName,
     #[serde(default)]
-    pub probe_alias: String,
+    pub probe_alias: ProbeAlias,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub probe_speed_khz: Option<u32>,
 }
@@ -49,6 +38,37 @@ pub struct ProbeInfo {
 pub struct Cli {
     pub probe_configs: HashMap<ProbeSerial, ProbeInfo>,
     pub auth_tokens: HashMap<AuthName, AuthToken>,
+}
+
+pub fn from_cli(target_settings: &HashMap<ProbeSerial, ProbeInfo>) -> anyhow::Result<Targets> {
+    let mut attached_targets = get_mcus();
+    let mut targets = Vec::new();
+
+    if attached_targets.is_empty() {
+        return Err(anyhow!("No targets attached to service (0 MCUs detected)"));
+    }
+
+    for (probe_serial, probe_info) in target_settings {
+        if let Some((probe_serial, cpu_type)) = attached_targets.remove_entry(&probe_serial) {
+            targets.push(Target {
+                cpu_type,
+                probe_serial,
+                probe_alias: probe_info.probe_alias.clone(),
+                target_name: probe_info.target_name.clone(),
+            });
+        } else {
+            warn!("Probe with serial '{}' is not attached.", probe_serial.0);
+        }
+    }
+
+    for (ps, _) in attached_targets {
+        warn!(
+            "Probe with serial '{}' does not have a configuration.",
+            ps.0
+        );
+    }
+
+    Ok(Targets::new(targets))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -83,7 +103,7 @@ impl SavedSettings {
                 ));
             }
 
-            if v.target_name.is_empty() {
+            if v.target_name.0.is_empty() {
                 return Err(anyhow!(
                     "Invalid probe config detected, 'target_name' is not filled"
                 ));

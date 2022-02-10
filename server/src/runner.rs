@@ -1,5 +1,6 @@
 use anyhow::anyhow;
 use defmt_decoder::{DecodeError, Locations as DefmtLocations, Table as DefmtTable};
+use embedded_ci_server::{ProbeSerial, TargetName};
 use log::{debug, error, warn};
 use object::{File, Object, ObjectSection, ObjectSymbol};
 use probe_rs::{
@@ -11,6 +12,8 @@ use probe_rs_rtt::{Rtt, ScanRegion, UpChannel};
 use std::io::Cursor;
 use std::thread;
 use std::time::{Duration, Instant};
+
+use crate::app::unroll_error;
 
 const THUMB_BIT: u32 = 1;
 //const LR: CoreRegisterAddress = CoreRegisterAddress(14);
@@ -55,8 +58,8 @@ enum RttType {
 ///
 /// From here all access and handling of the embedded target happens as it's run by the service.
 pub struct Runner<'a> {
-    target_name: &'a str,
-    probe_serial: &'a str,
+    target_name: &'a TargetName,
+    probe_serial: &'a ProbeSerial,
     probe_speed_khz: Option<u32>,
     from_ram: bool,
     symbols: Symbols,
@@ -83,8 +86,8 @@ impl<'a> Runner<'a> {
     /// Create a new runner, for running a binary on a target, based on the ELF files and settings.
     pub fn new(
         elf_bytes: &'a [u8],
-        target_name: &'a str,
-        probe_serial: &'a str,
+        target_name: &'a TargetName,
+        probe_serial: &'a ProbeSerial,
         probe_speed_khz: Option<u32>,
     ) -> Result<Runner<'a>, RunnerError> {
         let elf = File::parse(elf_bytes)
@@ -209,19 +212,19 @@ impl<'a> Runner<'a> {
     pub fn run(&mut self, timeout: Duration) -> Result<String, RunnerError> {
         let probe = self.get_probe(self.probe_speed_khz)?;
 
-        debug!("{}: Attaching to target", self.probe_serial);
+        debug!("{}: Attaching to target", self.probe_serial.0);
         // First we try to connect normally
-        let mut session = match probe.attach(self.target_name) {
+        let mut session = match probe.attach(&self.target_name.0) {
             Ok(v) => v,
             Err(e) => {
                 // If that fails we fall back to a connect under reset attach
                 warn!(
                     "{}: Attach failed ({}), trying with attach under reset...",
-                    self.probe_serial, e
+                    self.probe_serial.0, e
                 );
 
                 let probe = self.get_probe(self.probe_speed_khz)?;
-                probe.attach_under_reset(self.target_name).map_err(|_| {
+                probe.attach_under_reset(&self.target_name.0).map_err(|_| {
                     anyhow!(
                         "Unable to attach to the target, both normal and attach under reset failed"
                     )
@@ -229,7 +232,7 @@ impl<'a> Runner<'a> {
             }
         };
 
-        debug!("{}: Starting download of ELF", self.probe_serial);
+        debug!("{}: Starting download of ELF", self.probe_serial.0);
         {
             session.core(0)?.reset_and_halt(Duration::from_secs(3))?;
 
@@ -242,7 +245,7 @@ impl<'a> Runner<'a> {
 
             loader.commit(&mut session, opt)?;
         }
-        debug!("{}: Done!", self.probe_serial);
+        debug!("{}: Done!", self.probe_serial.0);
 
         let mut core = session.core(0)?;
 
@@ -258,14 +261,14 @@ impl<'a> Runner<'a> {
         if core.get_available_breakpoint_units()? == 0 {
             error!(
                 "{}: The target does not have any HW breakpoint units?!?! Aborting.",
-                self.probe_serial
+                self.probe_serial.0
             );
             return Err(anyhow!(
                 "The target does not have any HW breakpoint units?! Aborting."
             ))?;
         }
 
-        debug!("{}: Starting target", self.probe_serial);
+        debug!("{}: Starting target", self.probe_serial.0);
         if self.from_ram {
             core.write_core_reg(PC, self.vector_table.reset.0)?;
             core.write_core_reg(SP, self.vector_table.stack_pointer.0)?;
@@ -282,7 +285,7 @@ impl<'a> Runner<'a> {
             // const OFFSET: u32 = 44;
             // const FLAG: u32 = 2; // BLOCK_IF_FULL
             // core.write_word_32(self.symbols.rtt.0 + OFFSET, FLAG)?;
-            debug!("{}: Arrived at 'main'", self.probe_serial);
+            debug!("{}: Arrived at 'main'", self.probe_serial.0);
             core.clear_hw_breakpoint(self.symbols.main.0)?;
         }
 
@@ -320,7 +323,7 @@ impl<'a> Runner<'a> {
                 let log = self.log_to_string(buffer).unwrap_or_default();
                 debug!(
                     "{}: Firmware timeout, partial log:\n{}",
-                    self.probe_serial, log
+                    self.probe_serial.0, log
                 );
                 return Err(anyhow!(
                     "The firmware reached timeout, partial log:\n{}",
@@ -339,7 +342,7 @@ impl<'a> Runner<'a> {
                     let return_address = core.read_core_reg(core.registers().return_address())?;
                     let hfsr = core.read_word_32(0xE000_ED2C)?;
 
-                    warn!("{}: Halted due to hardfault", self.probe_serial);
+                    warn!("{}: Halted due to hardfault", self.probe_serial.0);
                     if hfsr & (1 << 30) != 0 {
                         let cfsr = core.read_word_32(0xE000_ED28)?;
 
@@ -383,7 +386,7 @@ impl<'a> Runner<'a> {
                     )
                     .into());
                 } else {
-                    debug!("{}: Halted due to breakpoint", self.probe_serial);
+                    debug!("{}: Halted due to breakpoint", self.probe_serial.0);
                 }
             }
             CoreStatus::Halted(h) => {
@@ -403,7 +406,7 @@ impl<'a> Runner<'a> {
 
         debug!(
             "{}: Log complete, size = {} bytes. Log:\n{}",
-            self.probe_serial,
+            self.probe_serial.0,
             log.len(),
             log
         );
@@ -420,7 +423,7 @@ impl<'a> Runner<'a> {
             } => {
                 debug!(
                     "{}: Detected defmt log - decoding, buffer size = {} bytes",
-                    self.probe_serial,
+                    self.probe_serial.0,
                     buffer.len()
                 );
 
@@ -443,7 +446,10 @@ impl<'a> Runner<'a> {
                             if table.encoding().can_recover() {
                                 continue;
                             } else {
-                                warn!("{}: defmt stream is malformed, aborting", self.probe_serial);
+                                warn!(
+                                    "{}: defmt stream is malformed, aborting",
+                                    self.probe_serial.0
+                                );
                                 return Ok(log);
                             }
                         }
@@ -458,7 +464,7 @@ impl<'a> Runner<'a> {
             RttType::PlainText => {
                 debug!(
                     "{}: Plain-text log detected - decoding, buffer size = {} bytes",
-                    self.probe_serial,
+                    self.probe_serial.0,
                     buffer.len()
                 );
 
@@ -469,7 +475,7 @@ impl<'a> Runner<'a> {
 
     /// Helper function to set up RTT channels and compensate for common errors.
     fn setup_rtt_channel(&mut self, session: &mut Session) -> Result<UpChannel, RunnerError> {
-        debug!("{}: Starting RTT pipe", self.probe_serial);
+        debug!("{}: Starting RTT pipe", self.probe_serial.0);
         let memory_map = session.target().memory_map.clone();
         let mut core = session.core(0)?;
         let start = Instant::now();
@@ -506,7 +512,7 @@ impl<'a> Runner<'a> {
             .iter()
             .find(|probe| {
                 if let Some(serial) = &probe.serial_number {
-                    self.probe_serial == serial
+                    &self.probe_serial.0 == serial
                 } else {
                     false
                 }
@@ -519,8 +525,9 @@ impl<'a> Runner<'a> {
         if let Some(khz) = probe_speed_khz {
             if let Err(e) = probe.set_speed(khz) {
                 error!(
-                    "{}; Unable to set probe speed, error: {:?}",
-                    self.probe_serial, e
+                    "{}; Unable to set probe speed, error: {}",
+                    self.probe_serial.0,
+                    unroll_error(&e)
                 );
             }
         }
