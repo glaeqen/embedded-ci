@@ -6,12 +6,11 @@
 use anyhow::anyhow;
 use num_enum::TryFromPrimitive;
 use rocket::request::FromParam;
-use rocket_okapi::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
 /// On which target a job should run on.
-#[derive(Clone, Debug, JsonSchema, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum RunOn {
     /// Run on a specific probe serial number.
     ProbeSerial(ProbeSerial),
@@ -36,7 +35,7 @@ impl RunOn {
 }
 
 /// A job specification for a run.
-#[derive(JsonSchema, Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunJob {
     /// On which embedded target should this job run on.
     pub run_on: RunOn,
@@ -47,7 +46,7 @@ pub struct RunJob {
 }
 
 /// The current status of a job.
-#[derive(JsonSchema, Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum JobStatus {
     /// Waiting, an embedded runner has not yet accepted this job.
     WaitingInQueue,
@@ -63,9 +62,7 @@ pub enum JobStatus {
 }
 
 /// The available types of CPUs this service supports.
-#[derive(
-    Debug, Clone, Copy, TryFromPrimitive, Hash, PartialEq, Eq, JsonSchema, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, TryFromPrimitive, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[allow(missing_docs)]
 #[repr(u32)]
 pub enum CpuId {
@@ -107,7 +104,7 @@ impl FromStr for CpuId {
 }
 
 /// The definition of an embedded target.
-#[derive(JsonSchema, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Target {
     /// CPU type of the target.
     pub cpu_type: CpuId,
@@ -120,7 +117,7 @@ pub struct Target {
 }
 
 /// A list of targets.
-#[derive(JsonSchema, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Targets {
     targets: Vec<Target>,
 }
@@ -164,9 +161,7 @@ impl Targets {
 }
 
 /// Probe serial wrapper.
-#[derive(
-    Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash, Default,
-)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 
 pub struct ProbeSerial(pub String);
 
@@ -177,9 +172,7 @@ impl std::fmt::Display for ProbeSerial {
 }
 
 /// Probe alias wrapper.
-#[derive(
-    Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash, Default,
-)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct ProbeAlias(pub String);
 
 impl std::fmt::Display for ProbeAlias {
@@ -189,9 +182,7 @@ impl std::fmt::Display for ProbeAlias {
 }
 
 /// Target name wrapper.
-#[derive(
-    Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash, Default,
-)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct TargetName(pub String);
 
 impl std::fmt::Display for TargetName {
@@ -201,9 +192,7 @@ impl std::fmt::Display for TargetName {
 }
 
 /// Name of an authorization token wrapper.
-#[derive(
-    Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
-)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AuthName(pub String);
 
 impl std::fmt::Display for AuthName {

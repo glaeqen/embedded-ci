@@ -5,6 +5,7 @@
 use anyhow::anyhow;
 pub use embedded_ci_server::*;
 use log::*;
+use reqwest::StatusCode;
 pub use reqwest::{Error, Url};
 use std::time::Duration;
 use tokio::time;
@@ -15,6 +16,9 @@ pub enum ClientError {
     /// A request error.
     #[error("A request failed")]
     Request(#[from] reqwest::Error),
+    /// Unauthorized.
+    #[error("Unauthorized: Token authentication failed")]
+    Unauthorized,
     /// Generic error.
     #[error(transparent)]
     Other(#[from] anyhow::Error),
@@ -29,7 +33,13 @@ pub async fn get_targets(server: Url, auth_token: Option<String>) -> Result<Targ
         client
     };
 
-    Ok(client.send().await?.json().await?)
+    let response = client.send().await?;
+
+    if response.status() == StatusCode::UNAUTHORIZED {
+        return Err(ClientError::Unauthorized);
+    }
+
+    Ok(response.json().await?)
 }
 
 /// Run a job on the server.
@@ -54,7 +64,13 @@ pub async fn run_job(
     } else {
         client
     };
-    let res: Result<u32, String> = client.json(&run_test).send().await?.json().await?;
+    let response = client.json(&run_test).send().await?;
+
+    if response.status() == StatusCode::UNAUTHORIZED {
+        return Err(ClientError::Unauthorized);
+    }
+
+    let res: Result<u32, String> = response.json().await?;
 
     match res {
         Ok(val) => loop {

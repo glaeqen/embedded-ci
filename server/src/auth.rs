@@ -1,14 +1,15 @@
+use embedded_ci_server::{AuthName, AuthToken};
 use log::*;
 use once_cell::sync::OnceCell;
 use rocket::http::Status;
 use rocket::request::{self, FromRequest, Request};
-use schemars::JsonSchema;
+use rocket::Response;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 static TOKEN: OnceCell<HashMap<AuthName, AuthToken>> = OnceCell::new();
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Token;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -50,47 +51,6 @@ impl<'r> FromRequest<'r> for Token {
     }
 }
 
-use okapi::openapi3::*;
-use rocket::Response;
-use rocket_okapi::request::{OpenApiFromRequest, RequestHeaderInput};
-use rocket_okapi::response::OpenApiResponder;
-use rocket_okapi::{self, gen::OpenApiGenerator};
-
-use embedded_ci_server::{AuthName, AuthToken};
-
-//rocket_okapi::Result<Parameter>;
-impl<'a, 'r> OpenApiFromRequest<'a> for Token {
-    fn from_request_input(
-        _gen: &mut OpenApiGenerator,
-        _name: String,
-        _required: bool,
-    ) -> rocket_okapi::Result<RequestHeaderInput> {
-        let mut security_req = SecurityRequirement::new();
-        security_req.insert("jwt_authorization".into(), Vec::new());
-
-        let security_scheme = SecurityScheme {
-            description: Some("JWT with the required fields is required".into()),
-            data: SecuritySchemeData::Http {
-                scheme: "bearer".into(),
-                bearer_format: Some("JWT".into()),
-            },
-            extensions: Object::default(),
-        };
-
-        Ok(RequestHeaderInput::Security(
-            "JWT".to_string(),
-            security_scheme,
-            security_req,
-        ))
-    }
-}
-
-impl<'a, 'r: 'a> OpenApiResponder<'a, 'r> for Token {
-    fn responses(_: &mut OpenApiGenerator) -> rocket_okapi::Result<Responses> {
-        let responses = Responses::default();
-        Ok(responses)
-    }
-}
 /// Returns an empty, default `Response`. Always returns `Ok`.
 impl<'a, 'r: 'a> rocket::response::Responder<'a, 'r> for Token {
     fn respond_to(self, _: &rocket::request::Request<'_>) -> rocket::response::Result<'static> {
