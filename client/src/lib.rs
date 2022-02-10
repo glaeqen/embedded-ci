@@ -39,12 +39,13 @@ pub async fn run_job(
     server: Url,
     auth_token: Option<String>,
     run_on: RunOn,
+    timeout: Duration,
     elf_file: &[u8],
 ) -> Result<String, ClientError> {
     let run_test = RunJob {
         run_on: run_on,
         binary_b64: base64::encode(elf_file),
-        timeout_secs: 30,
+        timeout_secs: timeout.as_secs() as u32,
     };
 
     let client = reqwest::Client::new().post(server.join("/run_job").unwrap());

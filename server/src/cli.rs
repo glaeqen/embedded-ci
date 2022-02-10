@@ -38,6 +38,7 @@ pub struct ProbeInfo {
 pub struct Cli {
     pub probe_configs: HashMap<ProbeSerial, ProbeInfo>,
     pub auth_tokens: HashMap<AuthName, AuthToken>,
+    pub server_configs: ServerConfigs,
 }
 
 pub fn from_cli(target_settings: &HashMap<ProbeSerial, ProbeInfo>) -> anyhow::Result<Targets> {
@@ -71,11 +72,70 @@ pub fn from_cli(target_settings: &HashMap<ProbeSerial, ProbeInfo>) -> anyhow::Re
     Ok(Targets::new(targets))
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SavedSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     auth_tokens: Option<HashMap<AuthName, AuthToken>>,
     probe_configs: HashMap<ProbeSerial, ProbeInfo>,
+    #[serde(default)]
+    server_configs: ServerConfigs,
+}
+
+impl std::fmt::Display for SavedSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        writeln!(f, "")?;
+        if let Some(tokens) = &self.auth_tokens {
+            writeln!(f, "  - Auth tokens:")?;
+            for (name, token) in tokens {
+                writeln!(f, "    - {}: {}", name, token)?;
+            }
+        } else {
+            writeln!(f, "  - Auth tokens: None")?;
+        }
+
+        writeln!(f, "")?;
+        writeln!(f, "  - Probe configs:")?;
+        for (serial, conf) in &self.probe_configs {
+            writeln!(
+                f,
+                "    - {}: {{ target_name: {}, probe_alias: {}{} }}",
+                serial,
+                conf.target_name,
+                conf.probe_alias,
+                if let Some(speed) = conf.probe_speed_khz {
+                    format!(", probe_speed_khz: {}", speed)
+                } else {
+                    format!("")
+                }
+            )?;
+        }
+
+        writeln!(f, "")?;
+        writeln!(f, "  - Server configs:")?;
+        writeln!(
+            f,
+            "    - max_target_timeout: {} seconds",
+            self.server_configs.max_target_timeout.0
+        )?;
+
+        Ok(())
+    }
+}
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+pub struct ServerConfigs {
+    #[serde(default)]
+    pub max_target_timeout: Timeout,
+}
+
+/// Timeout in seconds.
+#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
+pub struct Timeout(pub u32);
+
+impl Default for Timeout {
+    fn default() -> Self {
+        Timeout(30)
+    }
 }
 
 impl SavedSettings {
@@ -122,6 +182,8 @@ pub fn cli() -> anyhow::Result<Cli> {
 
     settings.validate()?;
 
+    println!("Starting server with settings: {}", settings);
+
     let mut auth_tokens = settings.auth_tokens.unwrap_or_default();
 
     if let Some(token_name) = args.new_token {
@@ -149,5 +211,6 @@ pub fn cli() -> anyhow::Result<Cli> {
     Ok(Cli {
         probe_configs: settings.probe_configs,
         auth_tokens,
+        server_configs: settings.server_configs,
     })
 }

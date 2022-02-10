@@ -1,29 +1,37 @@
 use clap::Parser;
 use embedded_ci_server::{CpuId, RunOn, TargetName};
 use reqwest::Url;
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
+    /// Server address.
     #[clap(
-        short,
         long,
         default_value = "http://localhost:8000",
         env = "EMBEDDED_CI_SERVER"
     )]
     server: Url,
 
-    #[clap(short, long, env = "EMBEDDED_CI_TOKEN")]
+    /// Optional authorization token with the CI server.
+    #[clap(long, env = "EMBEDDED_CI_TOKEN")]
     auth_token: Option<String>,
 
-    #[clap(short, long)]
+    /// The target on which to run.
+    #[clap(long)]
     target: Option<String>,
 
-    #[clap(short, long)]
+    /// The core on which to run.
+    #[clap(long)]
     core: Option<CpuId>,
 
+    /// Timeout in seconds.
+    #[clap(long, default_value = "30")]
+    timeout: u32,
+
+    /// The ELF file to run on the CI server.
     elf_file: PathBuf,
 }
 
@@ -33,6 +41,7 @@ pub struct Cli {
     pub auth_token: Option<String>,
     pub run_on: RunOn,
     pub elf_file: PathBuf,
+    pub timeout: Duration,
 }
 
 pub fn cli() -> Cli {
@@ -56,5 +65,6 @@ pub fn cli() -> Cli {
         auth_token: args.auth_token,
         run_on,
         elf_file: args.elf_file,
+        timeout: Duration::from_secs(args.timeout as _),
     }
 }

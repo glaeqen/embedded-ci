@@ -43,7 +43,7 @@ pub struct RunJob {
     /// The ELF file holding the binary and debug symbols.
     pub binary_b64: String,
     /// Timeout of the job in seconds.
-    pub timeout_secs: u8,
+    pub timeout_secs: u32,
 }
 
 /// The current status of a job.
@@ -170,11 +170,23 @@ impl Targets {
 
 pub struct ProbeSerial(pub String);
 
+impl std::fmt::Display for ProbeSerial {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// Probe alias wrapper.
 #[derive(
     Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash, Default,
 )]
 pub struct ProbeAlias(pub String);
+
+impl std::fmt::Display for ProbeAlias {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 /// Target name wrapper.
 #[derive(
@@ -182,12 +194,30 @@ pub struct ProbeAlias(pub String);
 )]
 pub struct TargetName(pub String);
 
+impl std::fmt::Display for TargetName {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// Name of an authorization token wrapper.
 #[derive(
     Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
 )]
 pub struct AuthName(pub String);
 
+impl std::fmt::Display for AuthName {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// Authorization token wrapper.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AuthToken(pub String);
+
+impl std::fmt::Display for AuthToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}

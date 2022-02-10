@@ -16,7 +16,14 @@ async fn main() -> anyhow::Result<()> {
 
     let elf_file = fs::read(cli.elf_file)?;
 
-    let job_result = run_job(cli.server, cli.auth_token, cli.run_on, &elf_file).await?;
+    let job_result = run_job(
+        cli.server,
+        cli.auth_token,
+        cli.run_on,
+        cli.timeout,
+        &elf_file,
+    )
+    .await?;
 
     println!("{}", job_result);
 

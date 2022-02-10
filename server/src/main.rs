@@ -39,8 +39,9 @@ async fn main() -> anyhow::Result<()> {
     let _rocket_handle = tokio::spawn(async move { routes::serve_routes(rocket_jobs).await });
 
     let backend_jobs = jobs.clone();
-    let _backend_handle =
-        tokio::spawn(async move { app::Backend::run(backend_jobs, cli.probe_configs).await });
+    let _backend_handle = tokio::spawn(async move {
+        app::Backend::run(backend_jobs, cli.probe_configs, cli.server_configs).await
+    });
 
     let cleanup_jobs = jobs.clone();
     let _cleanup_handle = tokio::spawn(async move { app::Cleanup::run(cleanup_jobs).await });

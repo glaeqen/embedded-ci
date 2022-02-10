@@ -1,5 +1,5 @@
 use crate::{
-    cli::ProbeInfo,
+    cli::{ProbeInfo, ServerConfigs},
     runner::{self, RunnerError},
 };
 use anyhow::anyhow;
@@ -91,13 +91,18 @@ impl Backend {
     pub async fn run(
         run_queue: Arc<Mutex<RunQueue>>,
         probe_configs: HashMap<ProbeSerial, ProbeInfo>,
+        server_configs: ServerConfigs,
     ) {
         let queue = run_queue.lock().unwrap();
 
         for target in queue.get_targets().all_targets() {
             let probe_config = probe_configs.get(&target.probe_serial).unwrap();
-            let mut worker =
-                Worker::from_target(target, run_queue.clone(), probe_config.probe_speed_khz);
+            let mut worker = Worker::from_settings(
+                target,
+                run_queue.clone(),
+                probe_config.probe_speed_khz,
+                server_configs.clone(),
+            );
             let _worker_handle = tokio::spawn(async move { worker.run().await });
             info!("Started worker for probe {}", target.probe_serial.0);
         }
@@ -112,14 +117,16 @@ struct Worker {
     target_name: TargetName,
     cpu_type: CpuId,
     jobs: Arc<Mutex<RunQueue>>,
+    server_configs: ServerConfigs,
 }
 
 impl Worker {
     /// Create a worker from a target.
-    fn from_target(
+    fn from_settings(
         target: &Target,
         jobs: Arc<Mutex<RunQueue>>,
         probe_speed_khz: Option<u32>,
+        server_configs: ServerConfigs,
     ) -> Self {
         Worker {
             probe_serial: target.probe_serial.clone(),
@@ -128,6 +135,7 @@ impl Worker {
             target_name: target.target_name.clone(),
             cpu_type: target.cpu_type,
             jobs,
+            server_configs,
         }
     }
 
@@ -194,7 +202,12 @@ impl Worker {
             self.probe_speed_khz,
         )?;
 
-        let run = runner.run(Duration::from_secs(test_specification.timeout_secs.into()));
+        let run = runner.run(Duration::from_secs(
+            test_specification
+                .timeout_secs
+                .min(self.server_configs.max_target_timeout.0)
+                .into(),
+        ));
 
         debug!("{}: Runner exit status: {:?}", self.probe_serial.0, run);
 
@@ -207,14 +220,18 @@ pub fn unroll_error(e: &dyn std::error::Error) -> String {
     let mut s = String::new();
     let mut level = 0;
 
-    s.push_str(&format!("\n{}: {}", level, e));
+    s.push_str(&format!("\nError: {}", e));
 
     let mut source = e.source();
 
+    if source.is_some() {
+        s.push_str("\n\nCaused by:");
+    }
+
     while let Some(e) = source {
-        level += 1;
-        s.push_str(&format!("\n{}: {}", level, e));
+        s.push_str(&format!("\n    {}: {}", level, e));
         source = e.source();
+        level += 1;
     }
 
     s

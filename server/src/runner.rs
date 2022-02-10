@@ -212,7 +212,7 @@ impl<'a> Runner<'a> {
     pub fn run(&mut self, timeout: Duration) -> Result<String, RunnerError> {
         let probe = self.get_probe(self.probe_speed_khz)?;
 
-        debug!("{}: Attaching to target", self.probe_serial.0);
+        debug!("{}: Attaching to target", self.probe_serial);
         // First we try to connect normally
         let mut session = match probe.attach(&self.target_name.0) {
             Ok(v) => v,
@@ -220,7 +220,7 @@ impl<'a> Runner<'a> {
                 // If that fails we fall back to a connect under reset attach
                 warn!(
                     "{}: Attach failed ({}), trying with attach under reset...",
-                    self.probe_serial.0, e
+                    self.probe_serial, e
                 );
 
                 let probe = self.get_probe(self.probe_speed_khz)?;
@@ -232,7 +232,7 @@ impl<'a> Runner<'a> {
             }
         };
 
-        debug!("{}: Starting download of ELF", self.probe_serial.0);
+        debug!("{}: Starting download of ELF", self.probe_serial);
         {
             session.core(0)?.reset_and_halt(Duration::from_secs(3))?;
 
@@ -245,7 +245,7 @@ impl<'a> Runner<'a> {
 
             loader.commit(&mut session, opt)?;
         }
-        debug!("{}: Done!", self.probe_serial.0);
+        debug!("{}: Done!", self.probe_serial);
 
         let mut core = session.core(0)?;
 
@@ -261,21 +261,21 @@ impl<'a> Runner<'a> {
         if core.get_available_breakpoint_units()? == 0 {
             error!(
                 "{}: The target does not have any HW breakpoint units?!?! Aborting.",
-                self.probe_serial.0
+                self.probe_serial
             );
             return Err(anyhow!(
                 "The target does not have any HW breakpoint units?! Aborting."
             ))?;
         }
 
-        debug!("{}: Starting target", self.probe_serial.0);
+        debug!("{}: Starting target", self.probe_serial);
         if self.from_ram {
             core.write_core_reg(PC, self.vector_table.reset.0)?;
             core.write_core_reg(SP, self.vector_table.stack_pointer.0)?;
             core.write_word_32(VTOR.0, self.vector_table.start.0)?;
         } else {
             // Reset the RTT control block
-            core.write_word_32(self.symbols.rtt.0, 0xdeadc0de)?;
+            core.write_word_32(self.symbols.rtt.0, 0x12341234)?;
 
             // Go to main
             core.set_hw_breakpoint(self.symbols.main.0)?;
@@ -285,7 +285,7 @@ impl<'a> Runner<'a> {
             // const OFFSET: u32 = 44;
             // const FLAG: u32 = 2; // BLOCK_IF_FULL
             // core.write_word_32(self.symbols.rtt.0 + OFFSET, FLAG)?;
-            debug!("{}: Arrived at 'main'", self.probe_serial.0);
+            debug!("{}: Arrived at 'main'", self.probe_serial);
             core.clear_hw_breakpoint(self.symbols.main.0)?;
         }
 
@@ -323,7 +323,7 @@ impl<'a> Runner<'a> {
                 let log = self.log_to_string(buffer).unwrap_or_default();
                 debug!(
                     "{}: Firmware timeout, partial log:\n{}",
-                    self.probe_serial.0, log
+                    self.probe_serial, log
                 );
                 return Err(anyhow!(
                     "The firmware reached timeout, partial log:\n{}",
@@ -342,7 +342,7 @@ impl<'a> Runner<'a> {
                     let return_address = core.read_core_reg(core.registers().return_address())?;
                     let hfsr = core.read_word_32(0xE000_ED2C)?;
 
-                    warn!("{}: Halted due to hardfault", self.probe_serial.0);
+                    warn!("{}: Halted due to hardfault", self.probe_serial);
                     if hfsr & (1 << 30) != 0 {
                         let cfsr = core.read_word_32(0xE000_ED28)?;
 
@@ -386,7 +386,7 @@ impl<'a> Runner<'a> {
                     )
                     .into());
                 } else {
-                    debug!("{}: Halted due to breakpoint", self.probe_serial.0);
+                    debug!("{}: Halted due to breakpoint", self.probe_serial);
                 }
             }
             CoreStatus::Halted(h) => {
@@ -406,7 +406,7 @@ impl<'a> Runner<'a> {
 
         debug!(
             "{}: Log complete, size = {} bytes. Log:\n{}",
-            self.probe_serial.0,
+            self.probe_serial,
             log.len(),
             log
         );
@@ -423,7 +423,7 @@ impl<'a> Runner<'a> {
             } => {
                 debug!(
                     "{}: Detected defmt log - decoding, buffer size = {} bytes",
-                    self.probe_serial.0,
+                    self.probe_serial,
                     buffer.len()
                 );
 
@@ -446,10 +446,7 @@ impl<'a> Runner<'a> {
                             if table.encoding().can_recover() {
                                 continue;
                             } else {
-                                warn!(
-                                    "{}: defmt stream is malformed, aborting",
-                                    self.probe_serial.0
-                                );
+                                warn!("{}: defmt stream is malformed, aborting", self.probe_serial);
                                 return Ok(log);
                             }
                         }
@@ -464,7 +461,7 @@ impl<'a> Runner<'a> {
             RttType::PlainText => {
                 debug!(
                     "{}: Plain-text log detected - decoding, buffer size = {} bytes",
-                    self.probe_serial.0,
+                    self.probe_serial,
                     buffer.len()
                 );
 
@@ -475,7 +472,7 @@ impl<'a> Runner<'a> {
 
     /// Helper function to set up RTT channels and compensate for common errors.
     fn setup_rtt_channel(&mut self, session: &mut Session) -> Result<UpChannel, RunnerError> {
-        debug!("{}: Starting RTT pipe", self.probe_serial.0);
+        debug!("{}: Starting RTT pipe", self.probe_serial);
         let memory_map = session.target().memory_map.clone();
         let mut core = session.core(0)?;
         let start = Instant::now();
@@ -526,7 +523,7 @@ impl<'a> Runner<'a> {
             if let Err(e) = probe.set_speed(khz) {
                 error!(
                     "{}; Unable to set probe speed, error: {}",
-                    self.probe_serial.0,
+                    self.probe_serial,
                     unroll_error(&e)
                 );
             }
