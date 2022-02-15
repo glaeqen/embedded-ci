@@ -3,7 +3,7 @@ use embedded_ci_server::{CpuId, RunOn, TargetName};
 use reqwest::Url;
 use std::{path::PathBuf, time::Duration};
 
-/// Simple program to greet a person
+/// A thin CLI on top of the `embedded-ci-server` API calls
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
