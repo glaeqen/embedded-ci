@@ -276,7 +276,7 @@ impl Cleanup {
 
         let mut to_cleanup = Vec::new();
         loop {
-            tokio::time::sleep(Duration::from_secs(10)).await;
+            tokio::time::sleep(Duration::from_secs(60)).await;
 
             let jobs = &mut run_queue.lock().unwrap().jobs;
 
