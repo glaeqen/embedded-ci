@@ -33,7 +33,10 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Targets: {:#?}", targets);
 
-    let jobs = Arc::new(Mutex::new(app::RunQueue::new(targets)));
+    let jobs = Arc::new(Mutex::new(app::RunQueue::new(
+        targets,
+        cli.server_configs.max_jobs_in_queue,
+    )));
 
     let rocket_jobs = jobs.clone();
     let _rocket_handle = tokio::spawn(async move { routes::serve_routes(rocket_jobs).await });

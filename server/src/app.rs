@@ -19,14 +19,16 @@ use std::time::Duration;
 pub struct RunQueue {
     targets: Targets,
     jobs: HashMap<u32, (JobStatus, RunJob)>,
+    max_jobs_in_queue: usize,
 }
 
 impl RunQueue {
     /// Create a new run queue based on available targets.
-    pub fn new(targets: Targets) -> Self {
+    pub fn new(targets: Targets, max_jobs_in_queue: usize) -> Self {
         RunQueue {
             targets,
             jobs: HashMap::new(),
+            max_jobs_in_queue,
         }
     }
 
@@ -42,6 +44,20 @@ impl RunQueue {
 
     /// Register a job to the queue.
     pub fn register_job(&mut self, test: RunJob) -> Result<u32, String> {
+        let jobs_in_queue = self
+            .jobs
+            .iter()
+            .map(|(_, (status, _))| match status {
+                JobStatus::WaitingInQueue => 1,
+                JobStatus::Running => 1,
+                _ => 0,
+            })
+            .count();
+
+        if jobs_in_queue >= self.max_jobs_in_queue {
+            return Err(format!("Run queue full ({} jobs in queue)", jobs_in_queue));
+        }
+
         let available = test.run_on.is_valid()
             && match &test.run_on {
                 RunOn::ProbeSerial(serial) => self.targets.get_probe(serial).is_some(),
@@ -178,13 +194,16 @@ impl Worker {
                 let test_res = self.run_test(&test_spec);
 
                 let mut jobs = self.jobs.lock().unwrap();
-                if let Some((job_status, _test_spec)) = jobs.jobs.get_mut(&id) {
+                if let Some((job_status, test_spec)) = jobs.jobs.get_mut(&id) {
                     info!("{}: Finished job with ID {}", self.probe_serial.0, id);
 
                     match test_res {
                         Ok(log) => *job_status = JobStatus::Done { log },
                         Err(e) => *job_status = JobStatus::Error(unroll_error(&e)),
                     }
+
+                    // Delete the binary file, it eats up a lot of space.
+                    test_spec.binary_b64 = String::new();
                 }
             }
         }
@@ -247,15 +266,18 @@ impl Cleanup {
 
         let mut to_cleanup = Vec::new();
         loop {
-            // We do cleanup once per minute
-            tokio::time::sleep(Duration::from_secs(60)).await;
+            tokio::time::sleep(Duration::from_secs(10)).await;
 
             let jobs = &mut run_queue.lock().unwrap().jobs;
 
-            debug!("Running cleanup of finished jobs...");
+            let mut first_cleanup = true;
 
             for id in to_cleanup.drain(..) {
-                debug!("    Cleaning up job ID {}...", id);
+                if first_cleanup {
+                    debug!("Running cleanup of finished jobs...");
+                    first_cleanup = false;
+                }
+                trace!("    Cleaning up job ID {}...", id);
                 jobs.remove_entry(&id);
             }
 

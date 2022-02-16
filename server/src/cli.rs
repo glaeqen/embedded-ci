@@ -117,6 +117,11 @@ impl std::fmt::Display for SavedSettings {
             "    - max_target_timeout: {} seconds",
             self.server_configs.max_target_timeout.0
         )?;
+        writeln!(
+            f,
+            "    - max_jobs_in_queue: {}",
+            self.server_configs.max_jobs_in_queue
+        )?;
 
         Ok(())
     }
@@ -126,6 +131,12 @@ impl std::fmt::Display for SavedSettings {
 pub struct ServerConfigs {
     #[serde(default)]
     pub max_target_timeout: Timeout,
+    #[serde(default = "default_max_jobs_in_queue")]
+    pub max_jobs_in_queue: usize,
+}
+
+fn default_max_jobs_in_queue() -> usize {
+    40
 }
 
 /// Timeout in seconds.
