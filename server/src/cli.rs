@@ -102,7 +102,11 @@ impl std::fmt::Display for SavedSettings {
                 "    - {}: {{ target_name: {}, probe_alias: {}{} }}",
                 serial,
                 conf.target_name,
-                conf.probe_alias,
+                if conf.probe_alias.0.is_empty() {
+                    format!("None")
+                } else {
+                    conf.probe_alias.0.clone()
+                },
                 if let Some(speed) = conf.probe_speed_khz {
                     format!(", probe_speed_khz: {}", speed)
                 } else {
