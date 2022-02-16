@@ -18,7 +18,7 @@ use std::time::Duration;
 #[derive(Debug)]
 pub struct RunQueue {
     targets: Targets,
-    jobs: HashMap<u32, (JobStatus, RunJob)>,
+    jobs: Vec<(u32, (JobStatus, RunJob))>,
     max_jobs_in_queue: usize,
 }
 
@@ -27,14 +27,24 @@ impl RunQueue {
     pub fn new(targets: Targets, max_jobs_in_queue: usize) -> Self {
         RunQueue {
             targets,
-            jobs: HashMap::new(),
+            jobs: Vec::new(),
             max_jobs_in_queue,
         }
     }
 
+    /// Find a job with a specific job ID.
+    pub fn get_job(&self, id: u32) -> Option<&(u32, (JobStatus, RunJob))> {
+        self.jobs.iter().find(|(job_id, _)| *job_id == id)
+    }
+
+    /// Find a job with a specific job ID, mutable version.
+    pub fn get_job_mut(&mut self, id: u32) -> Option<&mut (u32, (JobStatus, RunJob))> {
+        self.jobs.iter_mut().find(|(job_id, _)| *job_id == id)
+    }
+
     /// Get the status of a job ID.
     pub fn get_status(&self, id: u32) -> Option<JobStatus> {
-        self.jobs.get(&id).map(|val| val.0.clone())
+        self.get_job(id).map(|val| val.1 .0.clone())
     }
 
     /// Get the available targets.
@@ -44,7 +54,7 @@ impl RunQueue {
 
     /// Register a job to the queue.
     pub fn register_job(&mut self, test: RunJob) -> Result<u32, String> {
-        let jobs_in_queue = self
+        let jobs_in_queue: usize = self
             .jobs
             .iter()
             .map(|(_, (status, _))| match status {
@@ -52,7 +62,7 @@ impl RunQueue {
                 JobStatus::Running => 1,
                 _ => 0,
             })
-            .count();
+            .sum();
 
         if jobs_in_queue >= self.max_jobs_in_queue {
             return Err(format!("Run queue full ({} jobs in queue)", jobs_in_queue));
@@ -69,14 +79,14 @@ impl RunQueue {
         if available {
             let id = loop {
                 // Find a free ID
-                let candidate = random();
+                let candidate: u32 = random();
 
-                if self.jobs.get(&candidate).is_none() {
+                if self.get_job(candidate).is_none() {
                     break candidate;
                 }
             };
 
-            self.jobs.insert(id, (JobStatus::WaitingInQueue, test));
+            self.jobs.push((id, (JobStatus::WaitingInQueue, test)));
 
             Ok(id)
         } else {
@@ -194,7 +204,7 @@ impl Worker {
                 let test_res = self.run_test(&test_spec);
 
                 let mut jobs = self.jobs.lock().unwrap();
-                if let Some((job_status, test_spec)) = jobs.jobs.get_mut(&id) {
+                if let Some((_, (job_status, test_spec))) = jobs.get_job_mut(id) {
                     info!("{}: Finished job with ID {}", self.probe_serial.0, id);
 
                     match test_res {
@@ -278,7 +288,12 @@ impl Cleanup {
                     first_cleanup = false;
                 }
                 trace!("    Cleaning up job ID {}...", id);
-                jobs.remove_entry(&id);
+                let idx = if let Some(index) = jobs.iter().position(|(job_id, _)| *job_id == id) {
+                    index
+                } else {
+                    continue;
+                };
+                jobs.remove(idx);
             }
 
             jobs.shrink_to_fit();
