@@ -33,6 +33,8 @@ pub enum RunnerError {
     FileDownloadError(#[from] FileDownloadError),
     #[error("A debug probe error occurred")]
     DebugProbeError(#[from] DebugProbeError),
+    #[error("The app started, but did not reach to main")]
+    UnableToReachMain(#[source] probe_rs::Error),
     #[error("A runner error occurred")]
     ProbeRs(#[from] probe_rs::Error),
     #[error("An RTT error occurred")]
@@ -270,18 +272,24 @@ impl<'a> Runner<'a> {
 
         debug!("{}: Starting target", self.probe_serial);
         if self.from_ram {
-            core.write_core_reg(PC, self.vector_table.reset.0)?;
-            core.write_core_reg(SP, self.vector_table.stack_pointer.0)?;
-            core.write_word_32(VTOR.0, self.vector_table.start.0)?;
+            core.write_core_reg(PC, self.vector_table.reset.0)
+                .map_err(|e| RunnerError::UnableToReachMain(e))?;
+            core.write_core_reg(SP, self.vector_table.stack_pointer.0)
+                .map_err(|e| RunnerError::UnableToReachMain(e))?;
+            core.write_word_32(VTOR.0, self.vector_table.start.0)
+                .map_err(|e| RunnerError::UnableToReachMain(e))?;
         } else {
             // Reset the RTT control block
-            core.write_word_32(self.symbols.rtt.0, 0x12341234)?;
+            core.write_word_32(self.symbols.rtt.0, 0x12341234)
+                .map_err(|e| RunnerError::UnableToReachMain(e))?;
 
             // Go to main
-            core.set_hw_breakpoint(self.symbols.main.0)?;
+            core.set_hw_breakpoint(self.symbols.main.0)
+                .map_err(|e| RunnerError::UnableToReachMain(e))?;
 
-            core.run()?;
-            core.wait_for_core_halted(Duration::from_secs(5))?;
+            core.run().map_err(|e| RunnerError::UnableToReachMain(e))?;
+            core.wait_for_core_halted(Duration::from_secs(5))
+                .map_err(|e| RunnerError::UnableToReachMain(e))?;
             // const OFFSET: u32 = 44;
             // const FLAG: u32 = 2; // BLOCK_IF_FULL
             // core.write_word_32(self.symbols.rtt.0 + OFFSET, FLAG)?;

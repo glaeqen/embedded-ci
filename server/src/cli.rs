@@ -205,9 +205,7 @@ pub fn cli() -> anyhow::Result<Cli> {
 
     settings.validate()?;
 
-    println!("Starting server with settings: {}", settings);
-
-    let mut auth_tokens = settings.auth_tokens.unwrap_or_default();
+    let mut auth_tokens = settings.auth_tokens.clone().unwrap_or_default();
 
     if let Some(token_name) = args.new_token {
         let random_string: AuthToken = AuthToken(
@@ -230,6 +228,8 @@ pub fn cli() -> anyhow::Result<Cli> {
 
         std::process::exit(0);
     }
+
+    println!("Starting server with settings: {}", settings);
 
     Ok(Cli {
         probe_configs: settings.probe_configs,
