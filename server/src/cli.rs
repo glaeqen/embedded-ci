@@ -72,10 +72,11 @@ pub fn from_cli(target_settings: &HashMap<ProbeSerial, ProbeInfo>) -> anyhow::Re
     Ok(Targets::new(targets))
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct SavedSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     auth_tokens: Option<HashMap<AuthName, AuthToken>>,
+    #[serde(default)]
     probe_configs: HashMap<ProbeSerial, ProbeInfo>,
     #[serde(default)]
     server_configs: ServerConfigs,
@@ -187,6 +188,13 @@ impl SavedSettings {
 
 pub fn cli() -> anyhow::Result<Cli> {
     let args = Args::parse();
+
+    if !args.probe_config.exists() {
+        fs::write(
+            &args.probe_config,
+            &serde_json::to_string_pretty(&SavedSettings::default())?,
+        )?;
+    }
 
     let s = fs::read_to_string(&args.probe_config)?;
     let mut settings: SavedSettings = serde_json::from_str(&s)?;
