@@ -200,8 +200,23 @@ impl Worker {
             }
 
             if let Some((id, test_spec)) = id {
-                // Do the actual work
-                let test_res = self.run_test(&test_spec);
+                // Do the actual work (this is a synchronous operation that can take a long time)
+                let target_name = self.target_name.clone();
+                let probe_serial = self.probe_serial.clone();
+                let probe_speed_khz = self.probe_speed_khz;
+                let timeout = self.server_configs.max_target_timeout.0;
+
+                let test_res = tokio::task::spawn_blocking(move || {
+                    Worker::run_test(
+                        &target_name,
+                        &probe_serial,
+                        probe_speed_khz,
+                        timeout,
+                        &test_spec,
+                    )
+                })
+                .await
+                .unwrap();
 
                 let mut jobs = self.jobs.lock().unwrap();
                 if let Some((_, (job_status, test_spec))) = jobs.get_job_mut(id) {
@@ -220,25 +235,27 @@ impl Worker {
     }
 
     /// Run a job on the worker.
-    fn run_test(&mut self, test_specification: &RunJob) -> Result<String, RunnerError> {
+    fn run_test<'a>(
+        target_name: &'a TargetName,
+        probe_serial: &'a ProbeSerial,
+        probe_speed_khz: Option<u32>,
+        max_target_timeout: u32,
+        test_specification: &RunJob,
+    ) -> Result<String, RunnerError> {
         let elf_file = base64::decode(&test_specification.binary_b64)
             .map_err(|_| anyhow!("Firmware is not b64"))?;
 
-        let mut runner = runner::Runner::new(
-            &elf_file,
-            &self.target_name,
-            &self.probe_serial,
-            self.probe_speed_khz,
-        )?;
+        let mut runner =
+            runner::Runner::new(&elf_file, &target_name, &probe_serial, probe_speed_khz)?;
 
         let run = runner.run(Duration::from_secs(
             test_specification
                 .timeout_secs
-                .min(self.server_configs.max_target_timeout.0)
+                .min(max_target_timeout)
                 .into(),
         ));
 
-        debug!("{}: Runner exit status: {:?}", self.probe_serial.0, run);
+        debug!("{}: Runner exit status: {:?}", probe_serial.0, run);
 
         run
     }
