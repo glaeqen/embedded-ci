@@ -272,6 +272,10 @@ impl<'a> Runner<'a> {
 
         debug!("{}: Starting target", self.probe_serial);
         if self.from_ram {
+            debug!(
+                "{}: Running from RAM (will not halt at main)",
+                self.probe_serial
+            );
             core.write_core_reg(PC, self.vector_table.reset.0)
                 .map_err(|e| RunnerError::UnableToReachMain(e))?;
             core.write_core_reg(SP, self.vector_table.stack_pointer.0)
@@ -290,9 +294,9 @@ impl<'a> Runner<'a> {
             core.run().map_err(|e| RunnerError::UnableToReachMain(e))?;
             core.wait_for_core_halted(Duration::from_secs(5))
                 .map_err(|e| RunnerError::UnableToReachMain(e))?;
-            // const OFFSET: u32 = 44;
-            // const FLAG: u32 = 2; // BLOCK_IF_FULL
-            // core.write_word_32(self.symbols.rtt.0 + OFFSET, FLAG)?;
+            const OFFSET: u32 = 44;
+            const FLAG: u32 = 2; // BLOCK_IF_FULL
+            core.write_word_32(self.symbols.rtt.0 + OFFSET, FLAG)?;
             debug!("{}: Arrived at 'main'", self.probe_serial);
             core.clear_hw_breakpoint(self.symbols.main.0)?;
         }

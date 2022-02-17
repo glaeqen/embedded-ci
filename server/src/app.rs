@@ -168,8 +168,6 @@ impl Worker {
     /// Main async runner for a worker.
     async fn run(&mut self) {
         loop {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-
             trace!("{}: Run loop for probe", self.probe_serial.0);
 
             let mut id = None;
@@ -230,6 +228,8 @@ impl Worker {
                     // Delete the binary file, it eats up a lot of space.
                     test_spec.binary_b64 = String::new();
                 }
+            } else {
+                tokio::time::sleep(Duration::from_secs(1)).await;
             }
         }
     }
