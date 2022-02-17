@@ -297,7 +297,13 @@ impl<'a> Runner<'a> {
             core.clear_hw_breakpoint(self.symbols.main.0)?;
         }
 
-        core.set_hw_breakpoint(self.vector_table.hardfault.0 & !THUMB_BIT)?;
+        if self.from_ram {
+            // We can set breakpoints in RAM so we replace the instruction at the breakpoint
+            // location with the breakpoint instruction instead.
+            core.write_8(self.vector_table.hardfault.0 & !THUMB_BIT, &[0x00, 0xbe])?;
+        } else {
+            core.set_hw_breakpoint(self.vector_table.hardfault.0 & !THUMB_BIT)?;
+        }
 
         core.run()?;
 
