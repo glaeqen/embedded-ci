@@ -52,18 +52,20 @@ impl RunQueue {
         &self.targets
     }
 
-    /// Register a job to the queue.
-    pub fn register_job(&mut self, test: RunJob) -> Result<u32, String> {
-        let jobs_in_queue: usize = self
-            .jobs
+    pub fn jobs_in_queue(&self) -> usize {
+        self.jobs
             .iter()
             .map(|(_, (status, _))| match status {
                 JobStatus::WaitingInQueue => 1,
                 JobStatus::Running => 1,
                 _ => 0,
             })
-            .sum();
+            .sum()
+    }
 
+    /// Register a job to the queue.
+    pub fn register_job(&mut self, test: RunJob) -> Result<u32, String> {
+        let jobs_in_queue = self.jobs_in_queue();
         if jobs_in_queue >= self.max_jobs_in_queue {
             return Err(format!("Run queue full ({} jobs in queue)", jobs_in_queue));
         }
@@ -87,6 +89,12 @@ impl RunQueue {
             };
 
             self.jobs.push((id, (JobStatus::WaitingInQueue, test)));
+
+            info!(
+                "Registered job with ID {} ({} jobs in line)",
+                id,
+                self.jobs_in_queue()
+            );
 
             Ok(id)
         } else {
@@ -176,6 +184,7 @@ impl Worker {
 
                 let mut jobs = self.jobs.lock().unwrap();
 
+                let in_queue = jobs.jobs_in_queue();
                 for (test_id, (job_status, test_spec)) in &mut jobs.jobs {
                     if job_status == &JobStatus::WaitingInQueue {
                         let for_us = test_spec.run_on.is_valid()
@@ -187,7 +196,10 @@ impl Worker {
                             };
 
                         if for_us {
-                            info!("{}: Accepted job with ID {}", self.probe_serial.0, test_id);
+                            info!(
+                                "{}: Accepted job with ID {} ({} jobs in line)",
+                                self.probe_serial.0, test_id, in_queue
+                            );
                             id = Some((*test_id, test_spec.clone()));
                             *job_status = JobStatus::Running;
 
