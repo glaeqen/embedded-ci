@@ -32,9 +32,9 @@ struct Args {
     #[clap(long, group = "options")]
     probe_serial: Option<String>,
 
-    /// The core on which to run.
+    /// The list of cores on which to run.
     #[clap(long, group = "options")]
-    core: Option<CpuId>,
+    cores: Option<Vec<CpuId>>,
 
     /// Timeout in seconds.
     #[clap(long, default_value = "30")]
@@ -56,7 +56,7 @@ pub struct Cli {
 pub fn cli() -> Cli {
     let args = Args::parse();
 
-    let run_on = match (args.target, args.core, args.probe_alias, args.probe_serial) {
+    let run_on = match (args.target, args.cores, args.probe_alias, args.probe_serial) {
         (Some(target), _, _, _) => RunOn::Target(TargetName(target)),
         (_, Some(core), _, _) => RunOn::Core(core),
         (_, _, Some(probe_alias), _) => RunOn::ProbeAlias(ProbeAlias(probe_alias)),

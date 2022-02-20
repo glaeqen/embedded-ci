@@ -192,7 +192,9 @@ impl Worker {
                                 RunOn::ProbeSerial(serial) => serial == &self.probe_serial,
                                 RunOn::ProbeAlias(alias) => alias == &self.probe_alias,
                                 RunOn::Target(target_name) => target_name == &self.target_name,
-                                RunOn::Core(cpu_type) => cpu_type == &self.cpu_type,
+                                RunOn::Core(cpu_type) => {
+                                    cpu_type.iter().any(|cpu_type| cpu_type == &self.cpu_type)
+                                }
                             };
 
                         if for_us {

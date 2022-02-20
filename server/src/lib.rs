@@ -4,8 +4,8 @@
 //! Most are related to messages send over the REST API.
 
 use anyhow::anyhow;
+use clap::ArgEnum;
 use num_enum::TryFromPrimitive;
-use rocket::request::FromParam;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -18,8 +18,8 @@ pub enum RunOn {
     ProbeAlias(ProbeAlias),
     /// Run on a specific target name.
     Target(TargetName),
-    /// Run on a specific core type.
-    Core(CpuId),
+    /// Run on a specific core type, or a list of core types.
+    Core(Vec<CpuId>),
 }
 
 impl RunOn {
@@ -29,7 +29,7 @@ impl RunOn {
             RunOn::ProbeSerial(serial) => !serial.0.is_empty(),
             RunOn::ProbeAlias(alias) => !alias.0.is_empty(),
             RunOn::Target(target) => !target.0.is_empty(),
-            RunOn::Core(_) => true,
+            RunOn::Core(list) => !list.is_empty(),
         }
     }
 }
@@ -62,7 +62,9 @@ pub enum JobStatus {
 }
 
 /// The available types of CPUs this service supports.
-#[derive(Debug, Clone, Copy, TryFromPrimitive, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    ArgEnum, Debug, Clone, Copy, TryFromPrimitive, Hash, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[allow(missing_docs)]
 #[repr(u32)]
 pub enum CpuId {
@@ -74,14 +76,6 @@ pub enum CpuId {
     CortexM7 = 0xc27,
     CortexM23 = 0xd20,
     CortexM33 = 0xd21,
-}
-
-impl FromParam<'_> for CpuId {
-    type Error = anyhow::Error;
-
-    fn from_param(param: &str) -> Result<Self, Self::Error> {
-        Self::from_str(param)
-    }
 }
 
 impl FromStr for CpuId {
@@ -129,8 +123,10 @@ impl Targets {
     }
 
     /// Find the first core of a specific type in the target list.
-    pub fn get_core(&self, core: &CpuId) -> Option<&Target> {
-        self.targets.iter().find(|target| &target.cpu_type == core)
+    pub fn get_core(&self, cores: &[CpuId]) -> Option<&Target> {
+        self.targets
+            .iter()
+            .find(|target| cores.iter().any(|core| &target.cpu_type == core))
     }
 
     /// Find the first target with a specific probe serial in the target list.
