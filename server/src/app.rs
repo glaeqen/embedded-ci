@@ -197,7 +197,7 @@ impl Worker {
 
                         if for_us {
                             info!(
-                                "{}: Accepted job with ID {} ({} jobs in line)",
+                                "{}: Started job with ID {} ({} jobs in line)",
                                 self.probe_serial.0, test_id, in_queue
                             );
                             id = Some((*test_id, test_spec.clone()));
