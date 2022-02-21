@@ -31,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    info!("Targets: {:#?}", targets);
+    debug!("Targets: {:#?}", targets);
 
     let jobs = Arc::new(Mutex::new(app::RunQueue::new(
         targets,
