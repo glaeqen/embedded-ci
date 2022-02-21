@@ -9,9 +9,10 @@ use probe_rs::{
 };
 use probe_rs::{CoreStatus, DebugProbeError, HaltReason, Probe, ProbeCreationError};
 use probe_rs_rtt::{Rtt, ScanRegion, UpChannel};
-use std::io::Cursor;
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
+use std::{io::Cursor, sync::Arc};
 
 use crate::app::unroll_error;
 
@@ -211,8 +212,12 @@ impl<'a> Runner<'a> {
     }
 
     /// Run the `Runner` to completion with a timeout.
-    pub fn run(&mut self, timeout: Duration) -> Result<String, RunnerError> {
-        let probe = self.get_probe(self.probe_speed_khz)?;
+    pub fn run(
+        &mut self,
+        probe_mutex: &Arc<Mutex<()>>,
+        timeout: Duration,
+    ) -> Result<String, RunnerError> {
+        let probe = self.get_probe(probe_mutex, self.probe_speed_khz)?;
 
         debug!("{}: Attaching to target", self.probe_serial);
         // First we try to connect normally
@@ -225,7 +230,7 @@ impl<'a> Runner<'a> {
                     self.probe_serial, e
                 );
 
-                let probe = self.get_probe(self.probe_speed_khz)?;
+                let probe = self.get_probe(probe_mutex, self.probe_speed_khz)?;
                 probe.attach_under_reset(&self.target_name.0).map_err(|_| {
                     anyhow!(
                         "Unable to attach to the target, both normal and attach under reset failed"
@@ -521,31 +526,42 @@ impl<'a> Runner<'a> {
     }
 
     /// Get this runner's probe.
-    fn get_probe(&self, probe_speed_khz: Option<u32>) -> Result<Probe, RunnerError> {
-        let all_probes = Probe::list_all();
-        let mut probe = all_probes
-            .iter()
-            .find(|probe| {
-                if let Some(serial) = &probe.serial_number {
-                    &self.probe_serial.0 == serial
-                } else {
-                    false
-                }
-            })
-            .ok_or(DebugProbeError::ProbeCouldNotBeCreated(
-                ProbeCreationError::NotFound,
-            ))?
-            .open()?;
+    fn get_probe(
+        &self,
+        probe_mutex: &Arc<Mutex<()>>,
+        probe_speed_khz: Option<u32>,
+    ) -> Result<Probe, RunnerError> {
+        // Access to the list of probes needs to be unique, else the workers crash into each other.
+        let guard = probe_mutex.lock().unwrap();
+        let probe = {
+            let all_probes = Probe::list_all();
+            let mut probe = all_probes
+                .iter()
+                .find(|probe| {
+                    if let Some(serial) = &probe.serial_number {
+                        &self.probe_serial.0 == serial
+                    } else {
+                        false
+                    }
+                })
+                .ok_or(DebugProbeError::ProbeCouldNotBeCreated(
+                    ProbeCreationError::NotFound,
+                ))?
+                .open()?;
 
-        if let Some(khz) = probe_speed_khz {
-            if let Err(e) = probe.set_speed(khz) {
-                error!(
-                    "{}; Unable to set probe speed, error: {}",
-                    self.probe_serial,
-                    unroll_error(&e)
-                );
+            if let Some(khz) = probe_speed_khz {
+                if let Err(e) = probe.set_speed(khz) {
+                    error!(
+                        "{}; Unable to set probe speed, error: {}",
+                        self.probe_serial,
+                        unroll_error(&e)
+                    );
+                }
             }
-        }
+
+            probe
+        };
+        drop(guard);
 
         Ok(probe)
     }

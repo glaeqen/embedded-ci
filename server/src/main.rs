@@ -42,8 +42,15 @@ async fn main() -> anyhow::Result<()> {
     let _rocket_handle = tokio::spawn(async move { routes::serve_routes(rocket_jobs).await });
 
     let backend_jobs = jobs.clone();
+    let probe_mutex = Arc::new(Mutex::new(()));
     let _backend_handle = tokio::spawn(async move {
-        app::Backend::run(backend_jobs, cli.probe_configs, cli.server_configs).await
+        app::Backend::run(
+            backend_jobs,
+            cli.probe_configs,
+            cli.server_configs,
+            probe_mutex,
+        )
+        .await
     });
 
     let cleanup_jobs = jobs.clone();

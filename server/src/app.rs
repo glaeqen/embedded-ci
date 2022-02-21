@@ -126,6 +126,7 @@ impl Backend {
         run_queue: Arc<Mutex<RunQueue>>,
         probe_configs: HashMap<ProbeSerial, ProbeInfo>,
         server_configs: ServerConfigs,
+        probe_mutex: Arc<Mutex<()>>,
     ) {
         let queue = run_queue.lock().unwrap();
 
@@ -136,6 +137,7 @@ impl Backend {
                 run_queue.clone(),
                 probe_config.probe_speed_khz,
                 server_configs.clone(),
+                probe_mutex.clone(),
             );
             let _worker_handle = tokio::spawn(async move { worker.run().await });
             info!("Started worker for probe {}", target.probe_serial.0);
@@ -152,6 +154,7 @@ struct Worker {
     cpu_type: CpuId,
     jobs: Arc<Mutex<RunQueue>>,
     server_configs: ServerConfigs,
+    probe_mutex: Arc<Mutex<()>>,
 }
 
 impl Worker {
@@ -161,6 +164,7 @@ impl Worker {
         jobs: Arc<Mutex<RunQueue>>,
         probe_speed_khz: Option<u32>,
         server_configs: ServerConfigs,
+        probe_mutex: Arc<Mutex<()>>,
     ) -> Self {
         Worker {
             probe_serial: target.probe_serial.clone(),
@@ -170,6 +174,7 @@ impl Worker {
             cpu_type: target.cpu_type,
             jobs,
             server_configs,
+            probe_mutex,
         }
     }
 
@@ -217,6 +222,7 @@ impl Worker {
                 let probe_serial = self.probe_serial.clone();
                 let probe_speed_khz = self.probe_speed_khz;
                 let timeout = self.server_configs.max_target_timeout.0;
+                let probe_mutex = self.probe_mutex.clone();
 
                 let test_res = tokio::task::spawn_blocking(move || {
                     Worker::run_test(
@@ -225,6 +231,7 @@ impl Worker {
                         probe_speed_khz,
                         timeout,
                         &test_spec,
+                        &probe_mutex,
                     )
                 })
                 .await
@@ -255,6 +262,7 @@ impl Worker {
         probe_speed_khz: Option<u32>,
         max_target_timeout: u32,
         test_specification: &RunJob,
+        probe_mutex: &Arc<Mutex<()>>,
     ) -> Result<String, RunnerError> {
         let elf_file = base64::decode(&test_specification.binary_b64)
             .map_err(|_| anyhow!("Firmware is not b64"))?;
@@ -262,12 +270,15 @@ impl Worker {
         let mut runner =
             runner::Runner::new(&elf_file, &target_name, &probe_serial, probe_speed_khz)?;
 
-        let run = runner.run(Duration::from_secs(
-            test_specification
-                .timeout_secs
-                .min(max_target_timeout)
-                .into(),
-        ));
+        let run = runner.run(
+            probe_mutex,
+            Duration::from_secs(
+                test_specification
+                    .timeout_secs
+                    .min(max_target_timeout)
+                    .into(),
+            ),
+        );
 
         debug!("{}: Runner exit status: {:?}", probe_serial.0, run);
 
