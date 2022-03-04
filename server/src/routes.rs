@@ -23,6 +23,19 @@ fn run_job(
     Json(id)
 }
 
+// #[post("/run_collection", format = "application/json", data = "<job>")]
+// fn run_collection(
+//     _token: crate::auth::Token,
+//     job: Json<Vec<RunJob>>,
+//     run_queue: &State<Arc<Mutex<RunQueue>>>,
+// ) -> Json<Result<u32, String>> {
+//     let mut app = run_queue.lock().unwrap();
+//
+//     let id = app.register_job(job.0);
+//
+//     Json(id)
+// }
+
 #[get("/status/<id>")]
 fn get_status(
     _token: crate::auth::Token,

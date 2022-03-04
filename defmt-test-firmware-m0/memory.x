@@ -3,8 +3,8 @@ MEMORY
   /* NOTE K = KiBi = 1024 bytes */
   # FLASH : ORIGIN = 0x08000000, LENGTH = 64K
   # RAM : ORIGIN = 0x20000000, LENGTH = 32K
-  FLASH : ORIGIN = 0x20000000, LENGTH = 16K
-  RAM : ORIGIN = 0x20000000+16K, LENGTH = 16K
+  FLASH : ORIGIN = 0x20000000, LENGTH = 10K
+  RAM : ORIGIN = 0x20000000+10K, LENGTH = 10K
 }
 
 /* This is where the call stack will be allocated. */

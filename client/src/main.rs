@@ -25,7 +25,7 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
 
-    println!("{}", job_result);
+    print!("{}", job_result);
 
     Ok(())
 }

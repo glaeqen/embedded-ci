@@ -184,16 +184,17 @@ impl<'a> Runner<'a> {
         let rtt_type = if let Some(table) = defmt_decoder::Table::parse(&elf_bytes)? {
             let locations = table.get_locations(&elf_bytes)?;
 
-            if !table.is_empty() && locations.is_empty() {
-                return Err(RunnerError::ElfError(
-                    "'.defmt' symbol found but not enough debug information for defmt, enable debug symbols (debug = 2)".into()
-                ));
-            } else {
+                // TODO: This does not seem like it should be a hard error?
+            // if !table.is_empty() && locations.is_empty() {
+            //     return Err(RunnerError::ElfError(
+            //         "'.defmt' symbol found but not enough debug information for defmt, enable debug symbols (debug = 2)".into()
+            //     ));
+            // } else {
                 RttType::Defmt {
                     table,
                     _locations: locations,
                 }
-            }
+            //}
         } else {
             // The defmt table parsing returned none, so there is no `.defmt` section
             RttType::PlainText
