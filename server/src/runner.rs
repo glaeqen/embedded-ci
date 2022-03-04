@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use defmt_decoder::{DecodeError, Locations as DefmtLocations, Table as DefmtTable};
-use embedded_ci_server::{ProbeSerial, TargetName};
+use embedded_ci_common::{ProbeSerial, TargetName};
 use log::{debug, error, warn};
 use object::{File, Object, ObjectSection, ObjectSymbol};
 use probe_rs::{

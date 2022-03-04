@@ -5,6 +5,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+embedded-ci-common = { path = "../common", version = "0.1.0" }
 anyhow = "1.0.53"
 base64 = "0.13.0"
 clap = { version = "3", features = ["derive"] }

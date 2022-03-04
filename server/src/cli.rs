@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use clap::Parser;
-use embedded_ci_server::{
+use embedded_ci_common::{
     AuthName, AuthToken, ProbeAlias, ProbeSerial, Target, TargetName, Targets,
 };
 use log::*;

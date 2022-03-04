@@ -1,4 +1,4 @@
-use embedded_ci_server::{AuthName, AuthToken};
+use embedded_ci_common::{AuthName, AuthToken};
 use log::*;
 use once_cell::sync::OnceCell;
 use rocket::http::Status;

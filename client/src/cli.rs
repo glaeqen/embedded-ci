@@ -1,6 +1,6 @@
 use clap::Parser;
 use embedded_ci_client::{ProbeAlias, ProbeSerial};
-use embedded_ci_server::{CpuId, RunOn, TargetName};
+use embedded_ci_common::{CpuId, RunOn, TargetName};
 use reqwest::Url;
 use std::{path::PathBuf, time::Duration};
 

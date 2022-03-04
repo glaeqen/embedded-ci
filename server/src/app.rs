@@ -3,7 +3,7 @@ use crate::{
     runner::{self, RunnerError},
 };
 use anyhow::anyhow;
-use embedded_ci_server::{
+use embedded_ci_common::{
     CpuId, JobStatus, ProbeAlias, ProbeSerial, RunJob, RunOn, Target, TargetName, Targets,
 };
 use log::*;

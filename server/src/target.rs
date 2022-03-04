@@ -1,4 +1,4 @@
-use embedded_ci_server::{CpuId, ProbeSerial};
+use embedded_ci_common::{CpuId, ProbeSerial};
 use log::*;
 use num_enum::TryFromPrimitive;
 use probe_rs::{MemoryInterface, Probe, WireProtocol};

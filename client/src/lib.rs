@@ -3,7 +3,7 @@
 //! Here you can find helper functions for implementing runners that talk to the `embedded-ci`.
 
 use anyhow::anyhow;
-pub use embedded_ci_server::*;
+pub use embedded_ci_common::*;
 use log::*;
 use reqwest::StatusCode;
 pub use reqwest::{Error, Url};

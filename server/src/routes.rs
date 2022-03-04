@@ -1,5 +1,5 @@
 use crate::app::RunQueue;
-use embedded_ci_server::{JobStatus, RunJob, Targets};
+use embedded_ci_common::{JobStatus, RunJob, Targets};
 use rocket::{
     fairing::{Fairing, Info, Kind},
     get,
