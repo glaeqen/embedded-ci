@@ -6,7 +6,7 @@ use rocket::{
     http::Header,
     post, routes,
     serde::json::Json,
-    Request, Response, State,
+    Request, Response, State, Rocket, Ignite,
 };
 use std::sync::{Arc, Mutex};
 
@@ -80,7 +80,7 @@ impl Fairing for CORS {
     }
 }
 
-pub async fn serve_routes(state: Arc<Mutex<RunQueue>>) -> Result<(), rocket::Error> {
+pub async fn serve_routes(state: Arc<Mutex<RunQueue>>) -> Result<Rocket<Ignite>, rocket::Error> {
     rocket::build()
         .attach(CORS)
         .mount("/", routes![index, get_status, run_job])

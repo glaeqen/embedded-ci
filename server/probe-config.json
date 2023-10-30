@@ -4,17 +4,13 @@
     "test-token": "5rOxqdjgo9ZMYhG10vCXmfjGIBOPdgbvmCjTQQJOAjYlbqbkUJglrlnTflOWVr0mGmJSXdJpvQpemsHdaitM3Vk0yw40iVoDGmk9AczisYcKdbuuW58Pv5xjQnmTkoJu"
   },
   "probe_configs": {
-    "0670FF525750877267012316": {
-      "target_name": "STM32F746ZGTx",
-      "probe_alias": "master1"
+    "dc61cd078f654637ef4014": {
+      "target_name": "STM32F407VGTx",
+      "probe_alias": "anchor1"
     },
-    "066EFF494956805087153016": {
-      "target_name": "STM32F411RETx",
-      "probe_alias": "slave1"
-    },
-    "000760040495": {
-      "target_name": "nRF52832_xxAA",
-      "probe_alias": "yolo2"
+    "dc61cd078f785c37ef4014": {
+      "target_name": "STM32F407VGTx",
+      "probe_alias": "anchor2"
     }
   }
 }

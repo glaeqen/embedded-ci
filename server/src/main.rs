@@ -35,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
 
     let jobs = Arc::new(Mutex::new(app::RunQueue::new(
         targets,
-        cli.server_configs.max_jobs_in_queue,
+        cli.server_configs.max_jobs_in_queue.0,
     )));
 
     let rocket_jobs = jobs.clone();

@@ -3,12 +3,12 @@ use defmt_decoder::{DecodeError, Locations as DefmtLocations, Table as DefmtTabl
 use embedded_ci_common::{ProbeSerial, TargetName};
 use log::{debug, error, warn};
 use object::{File, Object, ObjectSection, ObjectSymbol};
+use probe_rs::rtt::{Error as RttError, Rtt, ScanRegion, UpChannel};
 use probe_rs::{
     flashing::{DownloadOptions, FileDownloadError, FlashError},
-    CoreRegisterAddress, MemoryInterface, Session,
+    MemoryInterface, RegisterId, Session,
 };
 use probe_rs::{CoreStatus, DebugProbeError, HaltReason, Probe, ProbeCreationError};
-use probe_rs_rtt::{Rtt, ScanRegion, UpChannel};
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -17,10 +17,10 @@ use std::{io::Cursor, sync::Arc};
 use crate::app::unroll_error;
 
 const THUMB_BIT: u32 = 1;
-//const LR: CoreRegisterAddress = CoreRegisterAddress(14);
-const PC: CoreRegisterAddress = CoreRegisterAddress(15);
-const SP: CoreRegisterAddress = CoreRegisterAddress(13);
-const PSR: CoreRegisterAddress = CoreRegisterAddress(16);
+const SP: RegisterId = RegisterId(13);
+const LR: RegisterId = RegisterId(14);
+const PC: RegisterId = RegisterId(15);
+const PSR: RegisterId = RegisterId(16);
 const VTOR: Address = Address(0xE000ED08);
 
 /// Error definitions for runner.
@@ -39,7 +39,7 @@ pub enum RunnerError {
     #[error("A runner error occurred")]
     ProbeRs(#[from] probe_rs::Error),
     #[error("An RTT error occurred")]
-    ProbeRsRtt(#[from] probe_rs_rtt::Error),
+    ProbeRsRtt(#[from] RttError),
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -184,16 +184,16 @@ impl<'a> Runner<'a> {
         let rtt_type = if let Some(table) = defmt_decoder::Table::parse(&elf_bytes)? {
             let locations = table.get_locations(&elf_bytes)?;
 
-                // TODO: This does not seem like it should be a hard error?
+            // TODO: This does not seem like it should be a hard error?
             // if !table.is_empty() && locations.is_empty() {
             //     return Err(RunnerError::ElfError(
             //         "'.defmt' symbol found but not enough debug information for defmt, enable debug symbols (debug = 2)".into()
             //     ));
             // } else {
-                RttType::Defmt {
-                    table,
-                    _locations: locations,
-                }
+            RttType::Defmt {
+                table,
+                _locations: locations,
+            }
             //}
         } else {
             // The defmt table parsing returned none, so there is no `.defmt` section
@@ -222,7 +222,7 @@ impl<'a> Runner<'a> {
 
         debug!("{}: Attaching to target", self.probe_serial);
         // First we try to connect normally
-        let mut session = match probe.attach(&self.target_name.0) {
+        let mut session = match probe.attach(&self.target_name.0, Default::default()) {
             Ok(v) => v,
             Err(e) => {
                 // If that fails we fall back to a connect under reset attach
@@ -232,11 +232,13 @@ impl<'a> Runner<'a> {
                 );
 
                 let probe = self.get_probe(probe_mutex, self.probe_speed_khz)?;
-                probe.attach_under_reset(&self.target_name.0).map_err(|_| {
-                    anyhow!(
+                probe
+                    .attach_under_reset(&self.target_name.0, Default::default())
+                    .map_err(|_| {
+                        anyhow!(
                         "Unable to attach to the target, both normal and attach under reset failed"
                     )
-                })?
+                    })?
             }
         };
 
@@ -259,14 +261,14 @@ impl<'a> Runner<'a> {
 
         if self.from_ram {
             // Fix for ECC RAM, do a dummy write. Thanks to @dirbaio for finding
-            let data = core.read_word_32(self.vector_table.start.0)?;
-            core.write_word_32(self.vector_table.start.0, data)?;
+            let data = core.read_word_32(self.vector_table.start.0 as _)?;
+            core.write_word_32(self.vector_table.start.0 as _, data)?;
         }
 
         core.reset_and_halt(Duration::from_secs(3))?;
 
         // Check so we have some breakpoint units
-        if core.get_available_breakpoint_units()? == 0 {
+        if core.available_breakpoint_units()? == 0 {
             error!(
                 "{}: The target does not have any HW breakpoint units?!?! Aborting.",
                 self.probe_serial
@@ -286,15 +288,15 @@ impl<'a> Runner<'a> {
                 .map_err(|e| RunnerError::UnableToReachMain(e))?;
             core.write_core_reg(SP, self.vector_table.stack_pointer.0)
                 .map_err(|e| RunnerError::UnableToReachMain(e))?;
-            core.write_word_32(VTOR.0, self.vector_table.start.0)
+            core.write_word_32(VTOR.0 as _, self.vector_table.start.0)
                 .map_err(|e| RunnerError::UnableToReachMain(e))?;
         } else {
             // Reset the RTT control block
-            core.write_word_32(self.symbols.rtt.0, 0x12341234)
+            core.write_word_32(self.symbols.rtt.0 as _, 0x12341234)
                 .map_err(|e| RunnerError::UnableToReachMain(e))?;
 
             // Go to main
-            core.set_hw_breakpoint(self.symbols.main.0)
+            core.set_hw_breakpoint(self.symbols.main.0 as _)
                 .map_err(|e| RunnerError::UnableToReachMain(e))?;
 
             core.run().map_err(|e| RunnerError::UnableToReachMain(e))?;
@@ -302,17 +304,20 @@ impl<'a> Runner<'a> {
                 .map_err(|e| RunnerError::UnableToReachMain(e))?;
             const OFFSET: u32 = 44;
             const FLAG: u32 = 2; // BLOCK_IF_FULL
-            core.write_word_32(self.symbols.rtt.0 + OFFSET, FLAG)?;
+            core.write_word_32((self.symbols.rtt.0 + OFFSET) as u64, FLAG)?;
             debug!("{}: Arrived at 'main'", self.probe_serial);
-            core.clear_hw_breakpoint(self.symbols.main.0)?;
+            core.clear_hw_breakpoint(self.symbols.main.0 as _)?;
         }
 
         if self.from_ram {
             // We can set breakpoints in RAM so we replace the instruction at the breakpoint
             // location with the breakpoint instruction instead.
-            core.write_8(self.vector_table.hardfault.0 & !THUMB_BIT, &[0x00, 0xbe])?;
+            core.write_8(
+                (self.vector_table.hardfault.0 as u32 & !THUMB_BIT) as u64,
+                &[0x00, 0xbe],
+            )?;
         } else {
-            core.set_hw_breakpoint(self.vector_table.hardfault.0 & !THUMB_BIT)?;
+            core.set_hw_breakpoint((self.vector_table.hardfault.0 as u32 & !THUMB_BIT) as u64)?;
         }
 
         core.run()?;
@@ -359,11 +364,11 @@ impl<'a> Runner<'a> {
         let log = self.log_to_string(buffer)?;
 
         match core.status()? {
-            CoreStatus::Halted(HaltReason::Breakpoint) => {
-                let isr_no = core.read_core_reg(PSR)? & 0xff;
+            CoreStatus::Halted(HaltReason::Breakpoint(_)) => {
+                let isr_no = core.read_core_reg::<u32>(PSR)? & 0xff;
 
                 if isr_no == 3 {
-                    let return_address = core.read_core_reg(core.registers().return_address())?;
+                    let return_address = core.read_core_reg::<u32>(LR)?;
                     let hfsr = core.read_word_32(0xE000_ED2C)?;
 
                     warn!("{}: Halted due to hardfault", self.probe_serial);
@@ -508,10 +513,10 @@ impl<'a> Runner<'a> {
                 &ScanRegion::Exact(self.symbols.rtt.0),
             ) {
                 Ok(rtt) => break rtt,
-                Err(probe_rs_rtt::Error::ControlBlockNotFound) => {
+                Err(RttError::ControlBlockNotFound) => {
                     thread::sleep(Duration::from_millis(10));
                     if Instant::now() - start > Duration::from_secs(3) {
-                        return Err(probe_rs_rtt::Error::ControlBlockNotFound.into());
+                        return Err(RttError::ControlBlockNotFound.into());
                     }
                 }
                 Err(e) => return Err(e.into()),

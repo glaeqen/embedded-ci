@@ -1,6 +1,7 @@
 use embedded_ci_common::{CpuId, ProbeSerial};
 use log::*;
 use num_enum::TryFromPrimitive;
+use probe_rs::config::TargetSelector;
 use probe_rs::{MemoryInterface, Probe, WireProtocol};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -43,7 +44,7 @@ pub fn get_mcus() -> HashMap<ProbeSerial, CpuId> {
         // skip_fail!(probe.target_reset());
         skip_fail!(probe.select_protocol(WireProtocol::Swd));
 
-        let mut session = skip_fail!(probe.attach("armv6m"));
+        let mut session = skip_fail!(probe.attach(TargetSelector::Auto, Default::default()));
         let mut core = skip_fail!(session.core(0));
         skip_fail!(core.halt(Duration::from_secs(3)));
 

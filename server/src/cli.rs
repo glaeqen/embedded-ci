@@ -1,14 +1,18 @@
 use anyhow::anyhow;
 use clap::Parser;
 use embedded_ci_common::{
-    AuthName, AuthToken, ProbeAlias, ProbeSerial, Target, TargetName, Targets,
+    AuthName, AuthToken, CpuId, ProbeAlias, ProbeSerial, Target, TargetName, Targets,
 };
 use log::*;
+use num_enum::TryFromPrimitive;
+use probe_rs::config::{get_target_by_name, TargetSelector};
+use probe_rs::{DebugProbeInfo, MemoryInterface, Probe};
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use crate::target::get_mcus;
 
@@ -41,32 +45,42 @@ pub struct Cli {
     pub server_configs: ServerConfigs,
 }
 
+fn read_cpuid(
+    probe_info: DebugProbeInfo,
+    target_name: impl Into<TargetSelector>,
+) -> anyhow::Result<CpuId> {
+    let mut session = Probe::open(probe_info)?.attach(target_name, Default::default())?;
+    let mut core = session.core(0)?;
+    core.halt(Duration::from_secs(3))?;
+    let value = core.read_word_32(0xE000ED00)?;
+    let cpuid_val = (value >> 4) & 0xfff;
+    let cpuid = CpuId::try_from_primitive(cpuid_val)?;
+    Ok(cpuid)
+}
+
 pub fn from_cli(target_settings: &HashMap<ProbeSerial, ProbeInfo>) -> anyhow::Result<Targets> {
-    let mut attached_targets = get_mcus();
     let mut targets = Vec::new();
 
-    if attached_targets.is_empty() {
-        return Err(anyhow!("No targets attached to service (0 MCUs detected)"));
-    }
-
-    for (probe_serial, probe_info) in target_settings {
-        if let Some((probe_serial, cpu_type)) = attached_targets.remove_entry(&probe_serial) {
-            targets.push(Target {
-                cpu_type,
-                probe_serial,
-                probe_alias: probe_info.probe_alias.clone(),
-                target_name: probe_info.target_name.clone(),
-            });
-        } else {
-            warn!("Probe with serial '{}' is not attached.", probe_serial.0);
+    for probe_info in Probe::list_all() {
+        match &probe_info.serial_number {
+            Some(serial_number) => {
+                let probe_serial = ProbeSerial(serial_number.clone());
+                match target_settings.get(&probe_serial) {
+                    Some(probe_info_settings) => {
+                        targets.push(Target {
+                            cpu_type: read_cpuid(probe_info, &probe_info_settings.target_name.0)?,
+                            probe_serial,
+                            probe_alias: probe_info_settings.probe_alias.clone(),
+                            target_name: probe_info_settings.target_name.clone(),
+                        });
+                    }
+                    None => warn!("Probe {} is not registered in a config file", serial_number),
+                }
+            }
+            None => {
+                warn!("Probe does not have a serial number, skipping")
+            }
         }
-    }
-
-    for (ps, _) in attached_targets {
-        warn!(
-            "Probe with serial '{}' does not have a configuration.",
-            ps.0
-        );
     }
 
     Ok(Targets::new(targets))
@@ -125,7 +139,7 @@ impl std::fmt::Display for SavedSettings {
         writeln!(
             f,
             "    - max_jobs_in_queue: {}",
-            self.server_configs.max_jobs_in_queue
+            self.server_configs.max_jobs_in_queue.0
         )?;
 
         Ok(())
@@ -136,12 +150,18 @@ impl std::fmt::Display for SavedSettings {
 pub struct ServerConfigs {
     #[serde(default)]
     pub max_target_timeout: Timeout,
-    #[serde(default = "default_max_jobs_in_queue")]
-    pub max_jobs_in_queue: usize,
+    #[serde(default)]
+    pub max_jobs_in_queue: MaxJobsInQueue,
 }
 
-fn default_max_jobs_in_queue() -> usize {
-    40
+/// Timeout in seconds.
+#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
+pub struct MaxJobsInQueue(pub usize);
+
+impl Default for MaxJobsInQueue {
+    fn default() -> Self {
+        MaxJobsInQueue(40)
+    }
 }
 
 /// Timeout in seconds.
