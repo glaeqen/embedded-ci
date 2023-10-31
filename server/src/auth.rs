@@ -44,9 +44,9 @@ impl<'r> FromRequest<'r> for Token {
                     }
                 }
 
-                request::Outcome::Failure((Status::Unauthorized, ApiTokenError::Invalid))
+                request::Outcome::Error((Status::Unauthorized, ApiTokenError::Invalid))
             }
-            None => request::Outcome::Failure((Status::Unauthorized, ApiTokenError::Missing)),
+            None => request::Outcome::Error((Status::Unauthorized, ApiTokenError::Missing)),
         }
     }
 }

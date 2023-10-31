@@ -6,11 +6,13 @@
   "probe_configs": {
     "dc61cd078f654637ef4014": {
       "target_name": "STM32F407VGTx",
-      "probe_alias": "anchor1"
+      "probe_alias": "anchor1",
+      "groups": ["anchor"]
     },
     "dc61cd078f785c37ef4014": {
       "target_name": "STM32F407VGTx",
-      "probe_alias": "anchor2"
+      "probe_alias": "anchor2",
+      "groups": ["anchor"]
     }
   }
 }

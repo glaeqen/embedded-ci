@@ -1,291 +1,100 @@
 use crate::{
     cli::{ProbeInfo, ServerConfigs},
-    runner::{self, RunnerError},
+    runner,
 };
-use anyhow::anyhow;
 use embedded_ci_common::{
-    CpuId, JobStatus, ProbeAlias, ProbeSerial, RunJob, RunOn, Target, TargetName, Targets,
+    job::{self, RunResultDetails},
+    ProbeSerial, ServerStatus,
 };
 use log::*;
-use rand::prelude::*;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, VecDeque},
+};
+use tokio::sync::mpsc;
 
-/// This is the communication channel between the REST API and the embedded runners.
-///
-/// Jobs are added to this object by the REST API and are removed by the runners.
-#[derive(Debug)]
-pub struct RunQueue {
-    targets: Targets,
-    jobs: Vec<(u32, (JobStatus, RunJob))>,
-    max_jobs_in_queue: usize,
-}
-
-impl RunQueue {
-    /// Create a new run queue based on available targets.
-    pub fn new(targets: Targets, max_jobs_in_queue: usize) -> Self {
-        RunQueue {
-            targets,
-            jobs: Vec::new(),
-            max_jobs_in_queue,
-        }
-    }
-
-    /// Find a job with a specific job ID.
-    pub fn get_job(&self, id: u32) -> Option<&(u32, (JobStatus, RunJob))> {
-        self.jobs.iter().find(|(job_id, _)| *job_id == id)
-    }
-
-    /// Find a job with a specific job ID, mutable version.
-    pub fn get_job_mut(&mut self, id: u32) -> Option<&mut (u32, (JobStatus, RunJob))> {
-        self.jobs.iter_mut().find(|(job_id, _)| *job_id == id)
-    }
-
-    /// Get the status of a job ID.
-    pub fn get_status(&self, id: u32) -> Option<JobStatus> {
-        self.get_job(id).map(|val| val.1 .0.clone())
-    }
-
-    /// Get the available targets.
-    pub fn get_targets(&self) -> &Targets {
-        &self.targets
-    }
-
-    pub fn jobs_in_queue(&self) -> usize {
-        self.jobs
-            .iter()
-            .map(|(_, (status, _))| match status {
-                JobStatus::WaitingInQueue => 1,
-                JobStatus::Running => 1,
-                _ => 0,
-            })
-            .sum()
-    }
-
-    /// Register a job to the queue.
-    pub fn register_job(&mut self, test: RunJob) -> Result<u32, String> {
-        let jobs_in_queue = self.jobs_in_queue();
-        if jobs_in_queue >= self.max_jobs_in_queue {
-            return Err(format!("Run queue full ({} jobs in queue)", jobs_in_queue));
-        }
-
-        let available = test.run_on.is_valid()
-            && match &test.run_on {
-                RunOn::ProbeSerial(serial) => self.targets.get_probe(serial).is_some(),
-                RunOn::ProbeAlias(alias) => self.targets.get_probe_alias(alias).is_some(),
-                RunOn::Target(target_name) => self.targets.get_target(target_name).is_some(),
-                RunOn::Core(cpu_id) => self.targets.get_core(cpu_id).is_some(),
-            };
-
-        if available {
-            let id = loop {
-                // Find a free ID
-                let candidate: u32 = random();
-
-                if self.get_job(candidate).is_none() {
-                    break candidate;
-                }
-            };
-
-            self.jobs.push((id, (JobStatus::WaitingInQueue, test)));
-
-            info!(
-                "Registered job with ID {} ({} jobs in line)",
-                id,
-                self.jobs_in_queue()
-            );
-
-            Ok(id)
-        } else {
-            let s = match &test.run_on {
-                RunOn::ProbeSerial(serial) => {
-                    format!("Probe with serial '{}' does not exist", serial.0)
-                }
-                RunOn::ProbeAlias(alias) => {
-                    format!("Probe with alias '{}' does not exist", alias.0)
-                }
-                RunOn::Target(target_name) => {
-                    format!("Target with name '{}' does not exist", target_name.0)
-                }
-                RunOn::Core(cpu_id) => format!("Core of type '{:?}' does not exist", cpu_id),
-            };
-
-            Err(s)
-        }
-    }
-}
-
-/// This run the backend.
-pub struct Backend {}
-
-impl Backend {
-    /// Start the backend job given the run queue (link between REST API and embedded runner) and
-    /// probe configs.
-    pub async fn run(
-        run_queue: Arc<Mutex<RunQueue>>,
-        probe_configs: HashMap<ProbeSerial, ProbeInfo>,
-        server_configs: ServerConfigs,
-        probe_mutex: Arc<Mutex<()>>,
-    ) {
-        let queue = run_queue.lock().unwrap();
-
-        for target in queue.get_targets().all_targets() {
-            let probe_config = probe_configs.get(&target.probe_serial).unwrap();
-            let mut worker = Worker::from_settings(
-                target,
-                run_queue.clone(),
-                probe_config.probe_speed_khz,
-                server_configs.clone(),
-                probe_mutex.clone(),
-            );
-            let _worker_handle = tokio::spawn(async move { worker.run().await });
-            info!("Started worker for probe {}", target.probe_serial.0);
-        }
-    }
-}
-
-/// Async worker for an embedded target.
-struct Worker {
-    probe_serial: ProbeSerial,
-    probe_alias: ProbeAlias,
-    probe_speed_khz: Option<u32>,
-    target_name: TargetName,
-    cpu_type: CpuId,
-    jobs: Arc<Mutex<RunQueue>>,
+/// Start the backend job given the run queue (link between REST API and embedded runner) and
+/// probe configs.
+pub async fn run(
+    mut register_job_rx: mpsc::Receiver<job::Job>,
+    finished_job_tx: mpsc::Sender<job::JobResult>,
+    server_status: Arc<Mutex<ServerStatus>>,
+    probe_configs: HashMap<ProbeSerial, ProbeInfo>,
     server_configs: ServerConfigs,
-    probe_mutex: Arc<Mutex<()>>,
-}
-
-impl Worker {
-    /// Create a worker from a target.
-    fn from_settings(
-        target: &Target,
-        jobs: Arc<Mutex<RunQueue>>,
-        probe_speed_khz: Option<u32>,
-        server_configs: ServerConfigs,
-        probe_mutex: Arc<Mutex<()>>,
-    ) -> Self {
-        Worker {
-            probe_serial: target.probe_serial.clone(),
-            probe_alias: target.probe_alias.clone(),
-            probe_speed_khz,
-            target_name: target.target_name.clone(),
-            cpu_type: target.cpu_type,
-            jobs,
-            server_configs,
-            probe_mutex,
-        }
-    }
-
-    /// Main async runner for a worker.
-    async fn run(&mut self) {
-        loop {
-            trace!("{}: Run loop for probe", self.probe_serial.0);
-
-            let mut id = None;
-            {
-                // Find a job
-
-                let mut jobs = self.jobs.lock().unwrap();
-
-                let in_queue = jobs.jobs_in_queue();
-                for (test_id, (job_status, test_spec)) in &mut jobs.jobs {
-                    if job_status == &JobStatus::WaitingInQueue {
-                        let for_us = test_spec.run_on.is_valid()
-                            && match &test_spec.run_on {
-                                RunOn::ProbeSerial(serial) => serial == &self.probe_serial,
-                                RunOn::ProbeAlias(alias) => alias == &self.probe_alias,
-                                RunOn::Target(target_name) => target_name == &self.target_name,
-                                RunOn::Core(cpu_type) => {
-                                    cpu_type.iter().any(|cpu_type| cpu_type == &self.cpu_type)
-                                }
-                            };
-
-                        if for_us {
-                            info!(
-                                "{}: Started job with ID {} ({} jobs in line)",
-                                self.probe_serial.0, test_id, in_queue
-                            );
-                            id = Some((*test_id, test_spec.clone()));
-                            *job_status = JobStatus::Running;
-
-                            break;
+) {
+    let max_target_timeout = server_configs.max_target_timeout;
+    loop {
+        let job = register_job_rx.recv().await.unwrap();
+        let job_id = job.id;
+        info!("{job_id}: received");
+        server_status.lock().unwrap().job_started(job_id);
+        let sync_barrier = crossbeam::sync::WaitGroup::new();
+        let mut job_result = job::JobResult::empty_from_job(&job);
+        let mut runs = Vec::new();
+        let timeout = Duration::from_secs(job.timeout.as_secs().min(max_target_timeout.0 as _));
+        let probe_mutex = Arc::new(Mutex::new(()));
+        for task in job.tasks.into_iter() {
+            for target in task.targets.into_iter() {
+                let probe_speed_khz = probe_configs
+                    .get(&target.probe_serial)
+                    .and_then(|pc| pc.probe_speed_khz);
+                let task_id = task.id;
+                let run_id = target.probe_serial.clone();
+                debug!("{job_id}/{task_id}/{run_id}: setting up");
+                runs.push((
+                    task_id,
+                    run_id.clone(),
+                    tokio::task::spawn_blocking({
+                        let task_binary = task.binary.clone();
+                        let sync_barrier = sync_barrier.clone();
+                        let probe_mutex = probe_mutex.clone();
+                        move || {
+                            debug!("{job_id}/{task_id}/{run_id}: started");
+                            let mut runner = runner::Runner::new(
+                                &task_binary,
+                                &target.target_name,
+                                &target.probe_serial,
+                                probe_speed_khz,
+                            )?;
+                            runner.run(&probe_mutex, sync_barrier, timeout)
                         }
-                    }
-                }
-            }
-
-            if let Some((id, test_spec)) = id {
-                // Do the actual work (this is a synchronous operation that can take a long time)
-                let target_name = self.target_name.clone();
-                let probe_serial = self.probe_serial.clone();
-                let probe_speed_khz = self.probe_speed_khz;
-                let timeout = self.server_configs.max_target_timeout.0;
-                let probe_mutex = self.probe_mutex.clone();
-
-                let test_res = tokio::task::spawn_blocking(move || {
-                    Worker::run_test(
-                        &target_name,
-                        &probe_serial,
-                        probe_speed_khz,
-                        timeout,
-                        &test_spec,
-                        &probe_mutex,
-                    )
-                })
-                .await
-                .unwrap();
-
-                let mut jobs = self.jobs.lock().unwrap();
-                if let Some((_, (job_status, test_spec))) = jobs.get_job_mut(id) {
-                    info!("{}: Finished job with ID {}", self.probe_serial.0, id);
-
-                    match test_res {
-                        Ok(log) => *job_status = JobStatus::Done { log },
-                        Err(e) => *job_status = JobStatus::Error(unroll_error(&e)),
-                    }
-
-                    // Delete the binary file, it eats up a lot of space.
-                    test_spec.binary_b64 = String::new();
-                }
-            } else {
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                    }),
+                ));
             }
         }
-    }
-
-    /// Run a job on the worker.
-    fn run_test<'a>(
-        target_name: &'a TargetName,
-        probe_serial: &'a ProbeSerial,
-        probe_speed_khz: Option<u32>,
-        max_target_timeout: u32,
-        test_specification: &RunJob,
-        probe_mutex: &Arc<Mutex<()>>,
-    ) -> Result<String, RunnerError> {
-        let elf_file = base64::decode(&test_specification.binary_b64)
-            .map_err(|_| anyhow!("Firmware is not b64"))?;
-
-        let mut runner =
-            runner::Runner::new(&elf_file, &target_name, &probe_serial, probe_speed_khz)?;
-
-        let run = runner.run(
-            probe_mutex,
-            Duration::from_secs(
-                test_specification
-                    .timeout_secs
-                    .min(max_target_timeout)
-                    .into(),
-            ),
-        );
-
-        debug!("{}: Runner exit status: {:?}", probe_serial.0, run);
-
-        run
+        if let Err(e) = tokio::task::spawn_blocking(move || sync_barrier.wait()).await {
+            error!("Failed to join the blocking thread: {e}");
+        }
+        for (task_id, run_id, run) in runs.into_iter() {
+            let run_outcome_from_runner = run.await.unwrap();
+            info!("{job_id}/{task_id}/{run_id}: finished");
+            debug!(
+                "{job_id}/{task_id}/{run_id}: result: {:?}",
+                &run_outcome_from_runner
+            );
+            let run_result = job_result
+                .task_mut_by_id(task_id)
+                .unwrap()
+                .run_mut_by_probe_serial(&run_id)
+                .unwrap();
+            run_result.result = match run_outcome_from_runner {
+                Ok(logs) => RunResultDetails::Success { logs },
+                Err(error) => RunResultDetails::Failure {
+                    error: error.to_string(),
+                },
+            };
+        }
+        // Should be ok to await here as a concurrent job is expected to pick the messages up quickly
+        match finished_job_tx.send(job_result).await {
+            Ok(_) => server_status.lock().unwrap().job_finished(job_id),
+            Err(error) => error!("Sending of the finished job failed: {:?}", error),
+        }
     }
 }
 
+// TODO: To be removed?
 /// Unrolls errors.
 pub fn unroll_error(e: &dyn std::error::Error) -> String {
     let mut s = String::new();
@@ -307,48 +116,36 @@ pub fn unroll_error(e: &dyn std::error::Error) -> String {
 
     s
 }
-
-/// This handles the cleanup of finished jobs.
-pub struct Cleanup {}
-
-impl Cleanup {
-    /// Start the cleanup job given the run queue, this cleans up old and expired jobs over time.
-    pub async fn run(run_queue: Arc<Mutex<RunQueue>>) {
-        info!("Starting job cleanup worker");
-
-        let mut to_cleanup = Vec::new();
-        loop {
-            tokio::time::sleep(Duration::from_secs(60)).await;
-
-            let jobs = &mut run_queue.lock().unwrap().jobs;
-
-            let mut first_cleanup = true;
-
-            for id in to_cleanup.drain(..) {
-                if first_cleanup {
-                    debug!("Running cleanup of finished jobs...");
-                    first_cleanup = false;
-                }
-                trace!("    Cleaning up job ID {}...", id);
-                let idx = if let Some(index) = jobs.iter().position(|(job_id, _)| *job_id == id) {
-                    index
-                } else {
-                    continue;
-                };
-                jobs.remove(idx);
+/// A default queue subscriber that receives finished jobs and populates them
+/// in the FIFO for the REST API to leniently consume
+pub async fn finished_job_collector(
+    finished_job_queue: Arc<Mutex<VecDeque<job::JobResult>>>,
+    mut finished_job_rx: mpsc::Receiver<job::JobResult>,
+    server_status: Arc<Mutex<ServerStatus>>,
+    max_jobs_in_queue: usize,
+) {
+    loop {
+        // Should never lag behind + if sender is closed program should terminate; thus unwrap()
+        let finished_job = finished_job_rx.recv().await.unwrap();
+        debug!(
+            "Moving the job result of id: {} into the finished queue",
+            finished_job.id
+        );
+        // Should never fail
+        let mut finished_job_queue = finished_job_queue.lock().unwrap();
+        match finished_job_queue.len().cmp(&max_jobs_in_queue) {
+            Ordering::Less => finished_job_queue.push_back(finished_job),
+            Ordering::Equal => {
+                // Cannot fail, holding a mutex between the len check and pop_front
+                let dropped_job = finished_job_queue.pop_front().unwrap();
+                server_status.lock().unwrap().job_cleared(dropped_job.id);
+                trace!(
+                    "Queue full, dropping finished job with id: {}",
+                    dropped_job.id
+                );
+                finished_job_queue.push_back(finished_job)
             }
-
-            jobs.shrink_to_fit();
-
-            for (job_id, (job_status, _)) in jobs {
-                match job_status {
-                    JobStatus::Done { log: _ } | JobStatus::Error(_) => {
-                        // Add to next round of cleanup
-                        to_cleanup.push(*job_id);
-                    }
-                    _ => {}
-                }
-            }
+            Ordering::Greater => unreachable!("Queue length longer than max allowed"),
         }
     }
 }

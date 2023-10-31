@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use defmt_decoder::{DecodeError, Locations as DefmtLocations, Table as DefmtTable};
 use embedded_ci_common::{ProbeSerial, TargetName};
-use log::{debug, error, warn};
+use log::*;
 use object::{File, Object, ObjectSection, ObjectSymbol};
 use probe_rs::rtt::{Error as RttError, Rtt, ScanRegion, UpChannel};
 use probe_rs::{
@@ -216,8 +216,9 @@ impl<'a> Runner<'a> {
     pub fn run(
         &mut self,
         probe_mutex: &Arc<Mutex<()>>,
+        barrier: crossbeam::sync::WaitGroup,
         timeout: Duration,
-    ) -> Result<String, RunnerError> {
+    ) -> Result<Vec<String>, RunnerError> {
         let probe = self.get_probe(probe_mutex, self.probe_speed_khz)?;
 
         debug!("{}: Attaching to target", self.probe_serial);
@@ -320,6 +321,10 @@ impl<'a> Runner<'a> {
             core.set_hw_breakpoint((self.vector_table.hardfault.0 as u32 & !THUMB_BIT) as u64)?;
         }
 
+        info!("{}: Barrier reached!", self.probe_serial);
+        barrier.wait();
+        info!("{}: Barrier passed!", self.probe_serial);
+
         core.run()?;
 
         // Attach to RTT.
@@ -349,7 +354,11 @@ impl<'a> Runner<'a> {
             }
 
             if Instant::now() - start > timeout {
-                let log = self.log_to_string(buffer).unwrap_or_default();
+                if let Err(e) = core.halt(Duration::from_secs(1)) {
+                    error!("Attempt to halt the core timed out when run firmware timed out: {e}");
+                }
+                let logs = self.log_to_strings(buffer).unwrap_or_default();
+                let log = logs.join("\n");
                 debug!(
                     "{}: Firmware timeout, partial log:\n{}",
                     self.probe_serial, log
@@ -361,7 +370,8 @@ impl<'a> Runner<'a> {
             }
         }
 
-        let log = self.log_to_string(buffer)?;
+        let logs = self.log_to_strings(buffer)?;
+        let log = logs.join("\n");
 
         match core.status()? {
             CoreStatus::Halted(HaltReason::Breakpoint(_)) => {
@@ -440,11 +450,11 @@ impl<'a> Runner<'a> {
             log
         );
 
-        Ok(log)
+        Ok(logs)
     }
 
     /// Convert a raw log from a target to an actual readable format.
-    fn log_to_string(&mut self, buffer: Vec<u8>) -> Result<String, RunnerError> {
+    fn log_to_strings(&mut self, buffer: Vec<u8>) -> Result<Vec<String>, RunnerError> {
         Ok(match &self.rtt_type {
             RttType::Defmt {
                 table,
@@ -459,7 +469,7 @@ impl<'a> Runner<'a> {
                 let mut stream_decoder = table.new_stream_decoder();
                 stream_decoder.received(&buffer);
 
-                let mut log = String::new();
+                let mut log = Vec::new();
 
                 loop {
                     match stream_decoder.decode() {
@@ -469,7 +479,7 @@ impl<'a> Runner<'a> {
                                 None => String::new(),
                             };
 
-                            log.push_str(&format!("{}{}\n", level, frame.display_message()));
+                            log.push(format!("{}{}", level, frame.display_message()));
                         }
                         Err(DecodeError::Malformed) => {
                             if table.encoding().can_recover() {
@@ -494,7 +504,11 @@ impl<'a> Runner<'a> {
                     buffer.len()
                 );
 
-                String::from_utf8(buffer).map_err(|e| anyhow!(e))?
+                String::from_utf8(buffer)
+                    .map_err(|e| anyhow!(e))?
+                    .split('\n')
+                    .map(|v| v.into())
+                    .collect()
             }
         })
     }

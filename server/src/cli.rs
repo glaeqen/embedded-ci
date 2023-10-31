@@ -1,20 +1,15 @@
 use anyhow::anyhow;
 use clap::Parser;
 use embedded_ci_common::{
-    AuthName, AuthToken, CpuId, ProbeAlias, ProbeSerial, Target, TargetName, Targets,
+    AuthName, AuthToken, ProbeAlias, ProbeSerial, TargetGroup, TargetName, Target, Targets,
 };
 use log::*;
-use num_enum::TryFromPrimitive;
-use probe_rs::config::{get_target_by_name, TargetSelector};
-use probe_rs::{DebugProbeInfo, MemoryInterface, Probe};
+use probe_rs::Probe;
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::time::Duration;
-
-use crate::target::get_mcus;
 
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
@@ -35,6 +30,7 @@ pub struct ProbeInfo {
     pub target_name: TargetName,
     #[serde(default)]
     pub probe_alias: ProbeAlias,
+    pub groups: Vec<TargetGroup>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub probe_speed_khz: Option<u32>,
 }
@@ -45,21 +41,8 @@ pub struct Cli {
     pub server_configs: ServerConfigs,
 }
 
-fn read_cpuid(
-    probe_info: DebugProbeInfo,
-    target_name: impl Into<TargetSelector>,
-) -> anyhow::Result<CpuId> {
-    let mut session = Probe::open(probe_info)?.attach(target_name, Default::default())?;
-    let mut core = session.core(0)?;
-    core.halt(Duration::from_secs(3))?;
-    let value = core.read_word_32(0xE000ED00)?;
-    let cpuid_val = (value >> 4) & 0xfff;
-    let cpuid = CpuId::try_from_primitive(cpuid_val)?;
-    Ok(cpuid)
-}
-
 pub fn from_cli(target_settings: &HashMap<ProbeSerial, ProbeInfo>) -> anyhow::Result<Targets> {
-    let mut targets = Vec::new();
+    let mut targets = Targets::new();
 
     for probe_info in Probe::list_all() {
         match &probe_info.serial_number {
@@ -68,11 +51,11 @@ pub fn from_cli(target_settings: &HashMap<ProbeSerial, ProbeInfo>) -> anyhow::Re
                 match target_settings.get(&probe_serial) {
                     Some(probe_info_settings) => {
                         targets.push(Target {
-                            cpu_type: read_cpuid(probe_info, &probe_info_settings.target_name.0)?,
                             probe_serial,
                             probe_alias: probe_info_settings.probe_alias.clone(),
                             target_name: probe_info_settings.target_name.clone(),
-                        });
+                            groups: probe_info_settings.groups.clone().into(),
+                        })?;
                     }
                     None => warn!("Probe {} is not registered in a config file", serial_number),
                 }
@@ -83,7 +66,7 @@ pub fn from_cli(target_settings: &HashMap<ProbeSerial, ProbeInfo>) -> anyhow::Re
         }
     }
 
-    Ok(Targets::new(targets))
+    Ok(targets)
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]

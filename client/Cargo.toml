@@ -7,11 +7,9 @@ edition = "2021"
 
 [dependencies]
 embedded-ci-common = { path = "../common", version = "0.1.0" }
-anyhow = "1.0.53"
-base64 = "0.13.0"
-clap = { version = "3", features = ["derive", "env"] }
-log = "0.4.14"
-pretty_env_logger = "0.4.0"
-tokio = { version = "1.0", features = ["full"] }
+anyhow = "1.0"
+base64 = "0.13"
+tokio = { version = "1.0" }
 reqwest = { version = "0.11", features = ["json"] }
-thiserror = "1.0.30"
+thiserror = "1.0"
+log = "0.4"
