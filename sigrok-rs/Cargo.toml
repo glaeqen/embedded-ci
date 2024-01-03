@@ -11,4 +11,5 @@ log = "0.4"
 pretty_env_logger = "0.5.0"
 regex = "1.10.2"
 thiserror = "1.0"
-tokio = { version = "1.34", features = ["macros", "rt-multi-thread"] }
+# TODO: Remove unnecessary features
+tokio = { version = "1.34", features = ["macros", "rt-multi-thread", "time", "signal"] }
