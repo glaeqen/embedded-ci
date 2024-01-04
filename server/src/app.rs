@@ -7,6 +7,7 @@ use embedded_ci_common::{
     ProbeSerial, ServerStatus,
 };
 use log::*;
+use sigrok_rs::LogicAnalyzer;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{
@@ -64,6 +65,17 @@ pub async fn run(
                 ));
             }
         }
+        let mut logic_analyzers = LogicAnalyzer::all().unwrap_or_default();
+        let mut active_captures = Vec::new();
+        for logic_analyzer in logic_analyzers.iter_mut() {
+            match logic_analyzer
+                .start_capture(24 /* TODO: Do not hardcode? */)
+                .await
+            {
+                Ok(active_capture) => active_captures.push(active_capture),
+                Err(e) => error!("Failed to start the logic analyzer data capture: {e}"),
+            }
+        }
         if let Err(e) = tokio::task::spawn_blocking(move || sync_barrier.wait()).await {
             error!("Failed to join the blocking thread: {e}");
         }
@@ -85,6 +97,14 @@ pub async fn run(
                     error: error.to_string(),
                 },
             };
+        }
+        for active_capture in active_captures.into_iter() {
+            match active_capture.stop_capture().await {
+                Ok(data) => {
+                    job_result.logic_analyzer_capture.push(base64::encode(data));
+                }
+                Err(e) => error!("Failed to stop the logic analyzer capture: {e}"),
+            }
         }
         // Should be ok to await here as a concurrent job is expected to pick the messages up quickly
         match finished_job_tx.send(job_result).await {

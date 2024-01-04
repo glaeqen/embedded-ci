@@ -6,6 +6,7 @@ edition = "2021"
 
 [dependencies]
 embedded-ci-common = { path = "../common", version = "0.1.0" }
+sigrok-rs = { version = "0.1.0", path = "../sigrok-rs" }
 anyhow = "1.0.53"
 base64 = "0.13.0"
 clap = { version = "3", features = ["derive"] }

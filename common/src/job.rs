@@ -66,13 +66,19 @@ impl Task {
 
 /// Result of a job
 ///
-/// Contains details of every single run of every single task which was part of the job of `id`
+/// Contains details of every single run of every single task which was part of
+/// the job of `id`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobResult {
     /// Identifier matching the corresponding [`Job::id`]
     pub id: Uuid,
     /// Results of individual tasks that make up this job
     pub tasks: Vec<TaskResult>,
+    /// The capture from the logic_analyzers
+    ///
+    /// Each entry matches a single logic analyzer devices and a string is a
+    /// base64-ed, bz2-encoded raw binary logic data format of sigrok
+    pub logic_analyzer_capture: Vec<String>,
 }
 
 impl JobResult {
@@ -83,6 +89,7 @@ impl JobResult {
         let mut job_result = Self {
             id: job.id,
             tasks: Vec::new(),
+            logic_analyzer_capture: Vec::new(),
         };
         for task in job.tasks.iter() {
             let mut task_result = TaskResult {
